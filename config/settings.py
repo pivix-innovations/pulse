@@ -8,7 +8,7 @@ from config.database import DatabaseSettings
 
 
 class Settings(EnvironmentSettings):
-    app: AppSettings = AppSettings()
-    database: DatabaseSettings = DatabaseSettings()
-    api: ApiSettings = ApiSettings()
-    logging: LoggingSettings = LoggingSettings()
+    app: AppSettings
+    database: DatabaseSettings
+    api: ApiSettings
+    logging: LoggingSettings

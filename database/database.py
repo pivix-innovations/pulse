@@ -12,7 +12,7 @@ from sqlalchemy import text
 class Database:
     """Manages the application's database engine and sessions."""
     
-    def __init_(self, settings: DatabaseSettings) -> None:
+    def __init__(self, settings: DatabaseSettings) -> None:
         self._settings = settings
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -54,7 +54,7 @@ class Database:
     async def session(self) -> AsyncIterator[AsyncSession]:
         """Provide a transactional session"""
         if self._session_factory is None:
-            return RuntimeError("Database is not initialized")
+            raise RuntimeError("Database is not initialized")
         
         async with self._session_factory() as session:
             yield session

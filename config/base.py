@@ -21,7 +21,7 @@ class EnvironmentSettings(BaseSettings):
         env_nested_delimiter="__",
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True,
+        case_sensitive=False,
         extra="ignore",
         frozen=True,
     )

@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from telemetry.router import router as telemetry_router
 from config.loader import get_settings
+from database.database import Database
+
 
 
 @asynccontextmanager
@@ -10,8 +12,10 @@ async def lifespan(app: FastAPI):
 
     # startup
     app.state.settings = settings
-
+    db = Database(settings.database)
+    await db.initialize()
     yield
+    await db.shutdown()
 
 
 def create_app() -> FastAPI:
