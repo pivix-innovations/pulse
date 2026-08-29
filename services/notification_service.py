@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Sequence
+
+from domain.entities.delivery import DeliveryAttempt
+from domain.entities.event import Event
+from domain.entities.notification import Notification
+from domain.entities.outbox import OutboxEntry
+from domain.entities.recipient import Recipient
+from domain.entities.workflow import Workflow
+from domain.value_objects.ids import (
+    DeliveryAttemptId,
+    EventId,
+    NotificationId,
+    OutboxEntryId,
+    RecipientId,
+    TenantId,
+    WorkflowId,
+)
+from services.ports.clients import ResolvedRecipient, SentinelClient
+from services.ports.uow import UnitOfWork, UnitOfWorkFactory
+from services.rendering_service import RenderingService
+from workflows.registry import WorkflowDefinition, WorkflowRegistry
+
+
+class UnknownEventType(Exception):
+    def __init__(self, event_type: str) -> None:
+        super().__init__(f"No workflow registered for event type '{event_type}'")
+        self.event_type = event_type
+
+
+class NoRecipientsResolved(Exception):
+    def __init__(self, event_type: str) -> None:
+        super().__init__(f"No recipients resolved for event type '{event_type}'")
+        self.event_type = event_type
+
+
+@dataclass(slots=True)
+class IncomingEvent:
+    event_type: str
+    source: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    idempotency_key: str | None = None
+    occurred_at: datetime | None = None
+    # Future instant -> fan-out deferred until then (scheduling service).
+    scheduled_at: datetime | None = None
+
+
+class NotificationService:
+    """
+    Ingress pipeline: resolve workflow + recipients + preferences, render
+    per channel, then persist notification + delivery attempts + outbox
+    entries in ONE transaction (transactional outbox). Scheduled events
+    persist the notification only; the scheduler fans out when due.
+    """
+
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        sentinel: SentinelClient,
+        registry: WorkflowRegistry,
+        rendering: RenderingService,
+    ) -> None:
+        self._uow_factory = uow_factory
+        self._sentinel = sentinel
+        self._registry = registry
+        self._rendering = rendering
+
+    async def process_event(self, tenant_id: TenantId, incoming: IncomingEvent) -> NotificationId:
+        resolved = await self._sentinel.resolve_recipients(
+            tenant_id, incoming.event_type, incoming.payload
+        )
+        if not resolved:
+            raise NoRecipientsResolved(incoming.event_type)
+
+        async with self._uow_factory() as uow:
+            # Idempotent ingress: same key -> same notification, no new fan-out.
+            if incoming.idempotency_key:
+                existing_event = await uow.events.get_by_idempotency_key(
+                    tenant_id, incoming.idempotency_key
+                )
+                if existing_event is not None:
+                    existing = await uow.notifications.get_by_event(tenant_id, existing_event.id)
+                    if existing is not None:
+                        return existing.id
+
+            workflow, definition = await self._resolve_workflow(
+                uow, tenant_id, incoming.event_type
+            )
+
+            event = Event(
+                id=EventId.new(),
+                tenant_id=tenant_id,
+                event_type=incoming.event_type,
+                source=incoming.source,
+                payload=incoming.payload,
+                idempotency_key=incoming.idempotency_key,
+                occurred_at=incoming.occurred_at,
+                received_at=datetime.now(timezone.utc),
+            )
+            await uow.events.add(event)
+
+            notification = Notification(
+                id=NotificationId.new(),
+                tenant_id=tenant_id,
+                event_id=event.id,
+                workflow_id=workflow.id,
+                payload=incoming.payload,
+                scheduled_at=incoming.scheduled_at,
+            )
+            await uow.notifications.add(notification)
+
+            now = datetime.now(timezone.utc)
+            if incoming.scheduled_at is not None and incoming.scheduled_at > now:
+                # Deferred: stays CREATED until the scheduler dispatches it.
+                await uow.commit()
+                return notification.id
+
+            await self.fan_out(uow, notification, definition, resolved)
+            notification.mark_processing()
+            await uow.notifications.update(notification)
+            await uow.commit()
+            return notification.id
+
+    async def _resolve_workflow(
+        self, uow: UnitOfWork, tenant_id: TenantId, event_type: str
+    ) -> tuple[Workflow, WorkflowDefinition]:
+        """A tenant's DB-managed workflow wins; the code registry is the default."""
+        stored = await uow.workflows.get_active_by_event_type(tenant_id, event_type)
+        if stored is not None:
+            return stored, WorkflowDefinition.from_dict(
+                stored.name, stored.event_type, stored.definition
+            )
+
+        definition = self._registry.get(event_type)
+        if definition is None:
+            raise UnknownEventType(event_type)
+        workflow = await uow.workflows.get_or_create(
+            Workflow(
+                id=WorkflowId.new(),
+                tenant_id=tenant_id,
+                name=definition.name,
+                event_type=definition.event_type,
+                definition=definition.as_dict(),
+            )
+        )
+        return workflow, definition
+
+    async def fan_out(
+        self,
+        uow: UnitOfWork,
+        notification: Notification,
+        definition: WorkflowDefinition,
+        resolved: Sequence[ResolvedRecipient],
+    ) -> int:
+        """
+        Render + persist one DeliveryAttempt and one outbox entry per
+        (recipient x opted-in channel), inside the caller's transaction.
+        Shared by ingress and the scheduler. Returns the attempt count.
+        """
+        attempts: list[DeliveryAttempt] = []
+        for r in resolved:
+            recipient = await uow.recipients.upsert_by_external_ref(
+                Recipient(
+                    id=RecipientId.new(),
+                    tenant_id=notification.tenant_id,
+                    external_ref=r.external_ref,
+                    email=r.email,
+                    phone=r.phone,
+                    locale=r.locale,
+                    timezone=r.timezone,
+                )
+            )
+            prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
+            opted_out = {p.channel for p in prefs if not p.opted_in}
+            attempts.extend(
+                self._build_attempt(notification, recipient, ct)
+                for ct in definition.channels
+                if ct.channel not in opted_out
+            )
+
+        await uow.delivery_attempts.add_many(attempts)
+        await uow.outbox.add_many(
+            [
+                OutboxEntry(
+                    id=OutboxEntryId.new(),
+                    tenant_id=notification.tenant_id,
+                    aggregate_type="delivery_attempt",
+                    aggregate_id=str(a.id),
+                    topic=f"deliver.{a.channel.value}",
+                    payload={
+                        "attempt_id": str(a.id),
+                        "tenant_id": str(notification.tenant_id),
+                        "channel": a.channel.value,
+                    },
+                )
+                for a in attempts
+            ]
+        )
+        return len(attempts)
+
+    def _build_attempt(
+        self,
+        notification: Notification,
+        recipient: Recipient,
+        channel_template,
+    ) -> DeliveryAttempt:
+        context = {
+            **notification.payload,
+            "recipient": {
+                "external_ref": recipient.external_ref,
+                "email": recipient.email,
+                "locale": recipient.locale,
+            },
+        }
+        rendered = self._rendering.render(
+            body=channel_template.body,
+            subject=channel_template.subject,
+            format=channel_template.format,
+            context=context,
+        )
+        return DeliveryAttempt(
+            id=DeliveryAttemptId.new(),
+            tenant_id=notification.tenant_id,
+            notification_id=notification.id,
+            recipient_id=recipient.id,
+            channel=channel_template.channel,
+            subject=rendered.subject,
+            body=rendered.text,
+            body_html=rendered.html,
+        )

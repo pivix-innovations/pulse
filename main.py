@@ -1,7 +1,29 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from telemetry.router import router as telemetry_router
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from sqlalchemy.exc import IntegrityError
+
+from api.v1.devices import router as devices_router
+from api.v1.events import router as events_router
+from api.v1.metrics import router as metrics_router
+from api.v1.notifications import router as notifications_router
+from api.v1.preferences import router as preferences_router
+from api.v1.providers import router as providers_router
+from api.v1.sse import router as sse_router
+from api.v1.templates import router as templates_router
+from api.v1.webhooks import router as webhooks_router
+from api.v1.workflows import router as workflows_router
+from clients.sentinel_client import InMemorySentinelClient
 from config.loader import get_settings
+from database.database import Database
+from repositories.uow import SqlAlchemyUnitOfWork
+from services.metrics_service import MetricsService
+from services.notification_service import NotificationService
+from services.rendering_service import RenderingService
+from sse.registry import SseConnectionRegistry
+from telemetry.router import router as telemetry_router
+from workflows.registry import WorkflowRegistry
 
 
 @asynccontextmanager
@@ -10,8 +32,33 @@ async def lifespan(app: FastAPI):
 
     # startup
     app.state.settings = settings
+    app.state.database = Database(settings.database)
+    await app.state.database.initialize()
+
+    app.state.redis = Redis(
+        host=settings.redis.host,
+        port=settings.redis.port,
+        db=settings.redis.db,
+        password=settings.redis.password,
+    )
+    app.state.sse_registry = SseConnectionRegistry(app.state.redis)
+
+    def uow_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(app.state.database.session_factory)
+
+    app.state.notification_service = NotificationService(
+        uow_factory=uow_factory,
+        sentinel=InMemorySentinelClient(),
+        registry=WorkflowRegistry(),
+        rendering=RenderingService(),
+    )
+    app.state.metrics_service = MetricsService(uow_factory)
 
     yield
+
+    # shutdown
+    await app.state.redis.aclose()
+    await app.state.database.shutdown()
 
 
 def create_app() -> FastAPI:
@@ -25,7 +72,25 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    @app.exception_handler(IntegrityError)
+    async def integrity_conflict(request: Request, exc: IntegrityError) -> JSONResponse:
+        # Unique-constraint violations surface as 409, not 500.
+        return JSONResponse(
+            status_code=409,
+            content={"detail": "Resource conflicts with an existing record"},
+        )
+
     app.include_router(telemetry_router)
+    app.include_router(events_router, prefix="/api/v1")
+    app.include_router(notifications_router, prefix="/api/v1")
+    app.include_router(devices_router, prefix="/api/v1")
+    app.include_router(webhooks_router, prefix="/api/v1")
+    app.include_router(sse_router, prefix="/api/v1")
+    app.include_router(templates_router, prefix="/api/v1")
+    app.include_router(workflows_router, prefix="/api/v1")
+    app.include_router(preferences_router, prefix="/api/v1")
+    app.include_router(providers_router, prefix="/api/v1")
+    app.include_router(metrics_router, prefix="/api/v1")
     return app
 
 app = create_app()
