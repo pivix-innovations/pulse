@@ -7,7 +7,7 @@ from domain.entities.delivery import DeliveryAttempt
 from domain.entities.notification import Notification
 from domain.entities.recipient import Recipient
 from domain.entities.workflow import Workflow
-from domain.enums import ChannelType, DeliveryStatus, OutboxStatus
+from domain.enums import ChannelType, DeliveryStatus, NotificationStatus, OutboxStatus
 from domain.value_objects.ids import (
     DeliveryAttemptId,
     EventId,
@@ -173,3 +173,59 @@ async def test_delivered_attempts_are_never_touched():
 
     assert handled == 0
     assert attempt.status is DeliveryStatus.DELIVERED
+
+
+async def test_non_confirming_sent_attempt_is_never_swept():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    _, recipient, notification = seed_world(uow, tenant)
+    attempt = seed_attempt(uow, tenant, notification, recipient, ChannelType.EMAIL, DeliveryStatus.PENDING)
+    attempt.mark_sent(datetime.now(timezone.utc) - timedelta(hours=5), expects_confirmation=False)
+
+    await make_sweep(uow).sweep_once()
+
+    assert attempt.status is DeliveryStatus.SENT
+    assert not uow.dead_letters.items
+
+
+async def test_sweep_settles_notification_once_attempts_are_terminal():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    _, recipient, notification = seed_world(uow, tenant)
+    notification.mark_processing()
+    attempt = seed_attempt(uow, tenant, notification, recipient, ChannelType.EMAIL, DeliveryStatus.PENDING)
+    attempt.mark_sent(datetime.now(timezone.utc), expects_confirmation=False)
+
+    await make_sweep(uow).sweep_once()
+
+    assert notification.status is NotificationStatus.COMPLETED
+
+
+async def test_sweep_fails_notification_when_every_attempt_died():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    _, recipient, notification = seed_world(uow, tenant)
+    notification.mark_processing()
+    attempt = seed_attempt(uow, tenant, notification, recipient, ChannelType.EMAIL, DeliveryStatus.PENDING)
+    attempt.mark_failed("boom")
+    attempt.mark_dead("boom")
+
+    await make_sweep(uow).sweep_once()
+
+    assert notification.status is NotificationStatus.FAILED
+
+
+async def test_sweep_requeues_stuck_in_doubt_attempt():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    _, recipient, notification = seed_world(uow, tenant)
+    attempt = seed_attempt(uow, tenant, notification, recipient, ChannelType.EMAIL, DeliveryStatus.PENDING)
+    attempt.mark_dispatching(datetime.now(timezone.utc) - timedelta(hours=1))
+
+    handled = await make_sweep(uow).sweep_once()
+
+    assert handled == 1
+    assert attempt.dispatch_started_at is None  # claim cleared; clock restarted
+    assert attempt.status is DeliveryStatus.PENDING
+    topics = [e.topic for e in uow.outbox.items.values()]
+    assert topics == ["deliver.email"]

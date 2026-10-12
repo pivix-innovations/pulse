@@ -86,3 +86,22 @@ class OutboxEntryId(_Id):
 @dataclass(frozen=True, slots=True)
 class DeadLetterId(_Id):
     pass
+
+@dataclass(frozen=True, slots=True)
+class UserId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class MembershipId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class SessionId(_Id):
+    pass

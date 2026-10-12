@@ -8,6 +8,7 @@ from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
 from domain.entities.event import Event
+from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
@@ -17,8 +18,11 @@ from domain.entities.template import Template
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus, OutboxStatus
 from domain.value_objects.ids import (
+    ApiKeyId,
+    DeadLetterId,
     DeliveryAttemptId,
     EventId,
+    MembershipId,
     NotificationId,
     OutboxEntryId,
     PreferenceId,
@@ -26,6 +30,7 @@ from domain.value_objects.ids import (
     RecipientId,
     TemplateId,
     TenantId,
+    UserId,
     WorkflowId,
 )
 from services.ports.clients import ResolvedRecipient
@@ -33,8 +38,9 @@ from services.ports.providers import OutboundMessage, SendResult
 
 
 class InMemoryNotificationRepository:
-    def __init__(self) -> None:
+    def __init__(self, attempts: "InMemoryDeliveryAttemptRepository | None" = None) -> None:
         self.items: dict[str, Notification] = {}
+        self._attempts = attempts
 
     async def add(self, notification: Notification) -> None:
         self.items[str(notification.id)] = notification
@@ -59,6 +65,30 @@ class InMemoryNotificationRepository:
         ]
         return due[:limit]
 
+    async def list_settleable(self, limit: int) -> list[Notification]:
+        attempts = self._attempts.items.values() if self._attempts else []
+        return [
+            n
+            for n in self.items.values()
+            if n.status is NotificationStatus.PROCESSING
+            and all(a.is_terminal for a in attempts if a.notification_id == n.id)
+        ][:limit]
+
+    async def list_for_tenant(
+        self,
+        tenant_id: TenantId,
+        *,
+        status: NotificationStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Notification], int]:
+        matches = [
+            n
+            for n in self.items.values()
+            if n.tenant_id == tenant_id and (status is None or n.status is status)
+        ]
+        return matches[offset : offset + limit], len(matches)
+
     async def update(self, notification: Notification) -> None:
         self.items[str(notification.id)] = notification
 
@@ -71,7 +101,9 @@ class InMemoryDeliveryAttemptRepository:
         for a in attempts:
             self.items[str(a.id)] = a
 
-    async def get(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> DeliveryAttempt | None:
+    async def get(
+        self, tenant_id: TenantId, attempt_id: DeliveryAttemptId, *, for_update: bool = False
+    ) -> DeliveryAttempt | None:
         a = self.items.get(str(attempt_id))
         return a if a and a.tenant_id == tenant_id else None
 
@@ -85,7 +117,12 @@ class InMemoryDeliveryAttemptRepository:
         ]
 
     async def get_by_dispatch(
-        self, notification_id: NotificationId, recipient_id: RecipientId, channel: ChannelType
+        self,
+        notification_id: NotificationId,
+        recipient_id: RecipientId,
+        channel: ChannelType,
+        *,
+        for_update: bool = False,
     ) -> DeliveryAttempt | None:
         for a in self.items.values():
             if (
@@ -111,9 +148,23 @@ class InMemoryDeliveryAttemptRepository:
             for a in self.items.values()
             if a.status is status
             and a.channel is channel
+            and (status is not DeliveryStatus.SENT or a.expects_confirmation)
             and (timestamp(a) is None or timestamp(a) < older_than)
         ]
         return matches[:limit]
+
+    async def list_stuck(
+        self, lost_before: datetime, in_doubt_before: datetime, limit: int
+    ) -> list[DeliveryAttempt]:
+        def stuck(a: DeliveryAttempt) -> bool:
+            if not a.is_dispatchable:
+                return False
+            if a.dispatch_started_at is not None:
+                return a.dispatch_started_at < in_doubt_before
+            due_at = a.next_retry_at or a.updated_at or a.created_at
+            return due_at is not None and due_at < lost_before
+
+        return [a for a in self.items.values() if stuck(a)][:limit]
 
     async def list_unconfirmed_for_recipient(
         self, tenant_id: TenantId, recipient_id: RecipientId, channel: ChannelType
@@ -169,6 +220,12 @@ class InMemoryEventRepository:
 
     async def add(self, event: Event) -> None:
         self.items[str(event.id)] = event
+
+    async def list_for_tenant(
+        self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Event], int]:
+        matches = [e for e in self.items.values() if e.tenant_id == tenant_id]
+        return matches[offset : offset + limit], len(matches)
 
     async def get_by_idempotency_key(self, tenant_id: TenantId, key: str) -> Event | None:
         for e in self.items.values():
@@ -296,6 +353,17 @@ class InMemoryDeadLetterRepository:
     async def add(self, dead_letter: DeadLetter) -> None:
         self.items.append(dead_letter)
 
+    async def get(self, tenant_id: TenantId, dead_letter_id: DeadLetterId) -> DeadLetter | None:
+        return next(
+            (d for d in self.items if d.tenant_id == tenant_id and d.id == dead_letter_id), None
+        )
+
+    async def list_for_tenant(
+        self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[DeadLetter], int]:
+        matches = [d for d in self.items if d.tenant_id == tenant_id]
+        return matches[offset : offset + limit], len(matches)
+
 
 class InMemoryTemplateRepository:
     def __init__(self) -> None:
@@ -335,6 +403,16 @@ class InMemoryProviderRepository:
 
     async def list(self, tenant_id: TenantId) -> list[Provider]:
         return [p for p in self.items.values() if p.tenant_id == tenant_id]
+
+    async def get_active_by_channel(
+        self, tenant_id: TenantId, channel: ChannelType
+    ) -> Provider | None:
+        matches = [
+            p
+            for p in self.items.values()
+            if p.tenant_id == tenant_id and p.channel is channel and p.is_active
+        ]
+        return max(matches, key=lambda p: p.priority, default=None)
 
     async def update(self, provider: Provider) -> None:
         self.items[str(provider.id)] = provider
@@ -396,6 +474,123 @@ class InMemoryMetricsRepository:
         return sum(latencies) / len(latencies) if latencies else None
 
 
+class InMemoryTenantRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, Tenant] = {}
+
+    async def add(self, tenant: Tenant) -> None:
+        self.items[str(tenant.id)] = tenant
+
+    async def get(self, tenant_id: TenantId) -> Tenant | None:
+        return self.items.get(str(tenant_id))
+
+    async def get_by_slug(self, slug: str) -> Tenant | None:
+        return next((t for t in self.items.values() if t.slug == slug), None)
+
+    async def list(self) -> list[Tenant]:
+        return list(self.items.values())
+
+    async def update(self, tenant: Tenant) -> None:
+        self.items[str(tenant.id)] = tenant
+
+
+class InMemoryUserRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, User] = {}
+
+    async def add(self, user: User) -> None:
+        self.items[str(user.id)] = user
+
+    async def get(self, user_id: UserId) -> User | None:
+        return self.items.get(str(user_id))
+
+    async def get_by_email(self, email: str) -> User | None:
+        return next((u for u in self.items.values() if u.email == email.lower()), None)
+
+    async def list(self) -> list[User]:
+        return list(self.items.values())
+
+    async def count_platform_admins(self) -> int:
+        return sum(1 for u in self.items.values() if u.is_platform_admin and u.is_active)
+
+    async def update(self, user: User) -> None:
+        self.items[str(user.id)] = user
+
+
+class InMemoryMembershipRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, Membership] = {}
+
+    async def upsert(self, membership: Membership) -> None:
+        existing = await self.get(membership.tenant_id, membership.user_id)
+        if existing is not None:
+            existing.role = membership.role
+            return
+        self.items[str(membership.id)] = membership
+
+    async def list_for_user(self, user_id: UserId) -> list[Membership]:
+        return [m for m in self.items.values() if m.user_id == user_id]
+
+    async def list_for_tenant(self, tenant_id: TenantId) -> list[Membership]:
+        return [m for m in self.items.values() if m.tenant_id == tenant_id]
+
+    async def get(self, tenant_id: TenantId, user_id: UserId) -> Membership | None:
+        return next(
+            (
+                m
+                for m in self.items.values()
+                if m.tenant_id == tenant_id and m.user_id == user_id
+            ),
+            None,
+        )
+
+    async def delete(self, membership_id: MembershipId) -> bool:
+        return self.items.pop(str(membership_id), None) is not None
+
+
+class InMemoryApiKeyRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, ApiKey] = {}
+
+    async def add(self, key: ApiKey) -> None:
+        self.items[str(key.id)] = key
+
+    async def get_by_hash(self, key_hash: str) -> ApiKey | None:
+        return next((k for k in self.items.values() if k.key_hash == key_hash), None)
+
+    async def list_for_tenant(self, tenant_id: TenantId) -> list[ApiKey]:
+        return [k for k in self.items.values() if k.tenant_id == tenant_id]
+
+    async def revoke(self, tenant_id: TenantId, key_id: ApiKeyId) -> bool:
+        key = self.items.get(str(key_id))
+        if key is None or key.tenant_id != tenant_id:
+            return False
+        key.is_active = False
+        return True
+
+
+class InMemorySessionRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, Session] = {}
+
+    async def add(self, sess: Session) -> None:
+        self.items[sess.token_hash] = sess
+
+    async def get_by_hash(self, token_hash: str) -> Session | None:
+        return self.items.get(token_hash)
+
+    async def revoke(self, token_hash: str, when: datetime) -> None:
+        sess = self.items.get(token_hash)
+        if sess is not None and sess.revoked_at is None:
+            sess.revoked_at = when
+
+    async def delete_expired(self, now: datetime) -> int:
+        expired = [h for h, s in self.items.items() if s.expires_at < now]
+        for h in expired:
+            del self.items[h]
+        return len(expired)
+
+
 class InMemoryUnitOfWork:
     """Implements services.ports.uow.UnitOfWork with dict-backed repos.
 
@@ -404,8 +599,8 @@ class InMemoryUnitOfWork:
     """
 
     def __init__(self) -> None:
-        self.notifications = InMemoryNotificationRepository()
         self.delivery_attempts = InMemoryDeliveryAttemptRepository()
+        self.notifications = InMemoryNotificationRepository(self.delivery_attempts)
         self.preferences = InMemoryPreferenceRepository()
         self.events = InMemoryEventRepository()
         self.workflows = InMemoryWorkflowRepository()
@@ -416,6 +611,11 @@ class InMemoryUnitOfWork:
         self.templates = InMemoryTemplateRepository()
         self.providers = InMemoryProviderRepository()
         self.metrics = InMemoryMetricsRepository(self)
+        self.tenants = InMemoryTenantRepository()
+        self.users = InMemoryUserRepository()
+        self.memberships = InMemoryMembershipRepository()
+        self.api_keys = InMemoryApiKeyRepository()
+        self.sessions = InMemorySessionRepository()
         self.commits = 0
         self.rollbacks = 0
 
@@ -448,9 +648,11 @@ class FakeProvider:
         channel: ChannelType = ChannelType.EMAIL,
         fail: bool = False,
         error: Exception | None = None,
+        confirms_delivery: bool = True,
     ) -> None:
         self.name = "fake"
         self.channel = channel
+        self.confirms_delivery = confirms_delivery
         self.fail = fail
         self.error = error
         self.sent: list[OutboundMessage] = []
@@ -468,8 +670,10 @@ class FakeProviderRegistry:
     def __init__(self, provider: FakeProvider) -> None:
         self._provider = provider
 
-    def get(self, channel: ChannelType) -> FakeProvider:
-        return self._provider
+    async def resolve(
+        self, uow, tenant_id: TenantId, channel: ChannelType
+    ) -> tuple[FakeProvider, ProviderId | None]:
+        return self._provider, None
 
 
 class FakeDispatchGuard:
@@ -481,6 +685,9 @@ class FakeDispatchGuard:
             return False
         self.keys.add(key)
         return True
+
+    async def complete(self, key: str) -> None:
+        self.keys.add(key)
 
     async def release(self, key: str) -> None:
         self.keys.discard(key)

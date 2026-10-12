@@ -3,14 +3,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from api.dependencies import get_uow, require_tenant
-from api.v1.schemas import DeliveryAttemptOut, NotificationOut
-from domain.enums import DeliveryStatus
+from api.v1.schemas import DeliveryAttemptOut, NotificationOut, NotificationSummaryOut
+from domain.enums import DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import DeliveryAttemptId, NotificationId, TenantId
 from repositories.uow import SqlAlchemyUnitOfWork
+from services.settlement import settle_notification
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -48,8 +49,36 @@ async def ack_notification(
             )
         attempt.mark_delivered(datetime.now(timezone.utc))
         await uow.delivery_attempts.update(attempt)
+        await settle_notification(uow, tenant_id, attempt.notification_id)
         await uow.commit()
         return AckOut(attempt_id=body.attempt_id, status=attempt.status)
+
+
+@router.get("", response_model=list[NotificationSummaryOut])
+async def list_notifications(
+    response: Response,
+    status: NotificationStatus | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    tenant_id: TenantId = Depends(require_tenant),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+) -> list[NotificationSummaryOut]:
+    async with uow:
+        items, total = await uow.notifications.list_for_tenant(
+            tenant_id, status=status, limit=limit, offset=offset
+        )
+    response.headers["X-Total-Count"] = str(total)
+    return [
+        NotificationSummaryOut(
+            id=n.id.value,
+            status=n.status,
+            event_id=n.event_id.value,
+            workflow_id=n.workflow_id.value,
+            scheduled_at=n.scheduled_at,
+            created_at=n.created_at,
+        )
+        for n in items
+    ]
 
 
 @router.get("/{notification_id}", response_model=NotificationOut)

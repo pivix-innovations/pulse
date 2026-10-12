@@ -1,10 +1,17 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 
+from api.v1.admin import router as admin_router
+from api.v1.auth import router as auth_router
+from api.v1.dead_letters import router as dead_letters_router
 from api.v1.devices import router as devices_router
+from api.v1.tenant import router as tenant_router
 from api.v1.events import router as events_router
 from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
@@ -14,10 +21,11 @@ from api.v1.sse import router as sse_router
 from api.v1.templates import router as templates_router
 from api.v1.webhooks import router as webhooks_router
 from api.v1.workflows import router as workflows_router
-from clients.sentinel_client import InMemorySentinelClient
+from clients.sentinel_client import DatabaseRecipientClient
 from config.loader import get_settings
 from database.database import Database
 from repositories.uow import SqlAlchemyUnitOfWork
+from services.identity_service import IdentityService
 from services.metrics_service import MetricsService
 from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
@@ -48,11 +56,12 @@ async def lifespan(app: FastAPI):
 
     app.state.notification_service = NotificationService(
         uow_factory=uow_factory,
-        sentinel=InMemorySentinelClient(),
+        sentinel=DatabaseRecipientClient(uow_factory),
         registry=WorkflowRegistry(),
         rendering=RenderingService(),
     )
     app.state.metrics_service = MetricsService(uow_factory)
+    app.state.identity_service = IdentityService(uow_factory)
 
     yield
 
@@ -81,9 +90,13 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(telemetry_router)
+    app.include_router(auth_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(tenant_router, prefix="/api/v1")
     app.include_router(events_router, prefix="/api/v1")
     app.include_router(notifications_router, prefix="/api/v1")
     app.include_router(devices_router, prefix="/api/v1")
+    app.include_router(dead_letters_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(sse_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
@@ -91,6 +104,15 @@ def create_app() -> FastAPI:
     app.include_router(preferences_router, prefix="/api/v1")
     app.include_router(providers_router, prefix="/api/v1")
     app.include_router(metrics_router, prefix="/api/v1")
+
+    ui_dir = Path(__file__).parent / "ui"
+    if ui_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
+        @app.get("/", include_in_schema=False)
+        async def index() -> RedirectResponse:
+            return RedirectResponse(url="/ui/")
+
     return app
 
 app = create_app()

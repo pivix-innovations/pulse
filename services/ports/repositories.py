@@ -7,6 +7,7 @@ from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
 from domain.entities.event import Event
+from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
@@ -14,10 +15,13 @@ from domain.entities.provider import Provider
 from domain.entities.recipient import Recipient
 from domain.entities.template import Template
 from domain.entities.workflow import Workflow
-from domain.enums import ChannelType, DeliveryStatus
+from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import (
     DeliveryAttemptId,
+    ApiKeyId,
+    DeadLetterId,
     EventId,
+    MembershipId,
     NotificationId,
     OutboxEntryId,
     PreferenceId,
@@ -25,6 +29,7 @@ from domain.value_objects.ids import (
     RecipientId,
     TemplateId,
     TenantId,
+    UserId,
     WorkflowId,
 )
 
@@ -42,6 +47,21 @@ class NotificationRepository(Protocol):
         """CREATED notifications whose scheduled_at has arrived (locked, skip-locked)."""
         ...
 
+    async def list_settleable(self, limit: int) -> list[Notification]:
+        """PROCESSING notifications with no open attempts left (locked, skip-locked)."""
+        ...
+
+    async def list_for_tenant(
+        self,
+        tenant_id: TenantId,
+        *,
+        status: NotificationStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Notification], int]:
+        """Newest-first page plus the total matching count."""
+        ...
+
     async def update(self, notification: Notification) -> None: ...
 
 
@@ -51,7 +71,12 @@ class DeliveryAttemptRepository(Protocol):
     async def add_many(self, attempts: Sequence[DeliveryAttempt]) -> None: ...
 
     async def get_by_dispatch(
-        self, notification_id: NotificationId, recipient_id: RecipientId, channel: ChannelType
+        self,
+        notification_id: NotificationId,
+        recipient_id: RecipientId,
+        channel: ChannelType,
+        *,
+        for_update: bool = False,
     ) -> DeliveryAttempt | None:
         """Look up by the (notification, recipient, channel) idempotency triple."""
         ...
@@ -66,13 +91,25 @@ class DeliveryAttemptRepository(Protocol):
         """Attempts sitting in `status` since before `older_than` (sweep input)."""
         ...
 
+    async def list_stuck(
+        self, lost_before: datetime, in_doubt_before: datetime, limit: int
+    ) -> list[DeliveryAttempt]:
+        """
+        Pending/retrying attempts nobody is working: never claimed and due
+        before `lost_before` (job lost), or claimed before `in_doubt_before`
+        with no outcome recorded (worker died mid-send). Locked, skip-locked.
+        """
+        ...
+
     async def list_unconfirmed_for_recipient(
         self, tenant_id: TenantId, recipient_id: RecipientId, channel: ChannelType
     ) -> list[DeliveryAttempt]:
         """Sent-but-not-delivered attempts, oldest first (SSE replay)."""
         ...
 
-    async def get(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> DeliveryAttempt | None: ...
+    async def get(
+        self, tenant_id: TenantId, attempt_id: DeliveryAttemptId, *, for_update: bool = False
+    ) -> DeliveryAttempt | None: ...
 
     async def list_for_notification(
         self, tenant_id: TenantId, notification_id: NotificationId
@@ -97,6 +134,12 @@ class EventRepository(Protocol):
     """Persistence port for inbound events."""
 
     async def add(self, event: Event) -> None: ...
+
+    async def list_for_tenant(
+        self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Event], int]:
+        """Newest-first page plus the total count."""
+        ...
 
     async def get_by_idempotency_key(self, tenant_id: TenantId, key: str) -> Event | None: ...
 
@@ -143,6 +186,12 @@ class ProviderRepository(Protocol):
     async def get(self, tenant_id: TenantId, provider_id: ProviderId) -> Provider | None: ...
 
     async def list(self, tenant_id: TenantId) -> list[Provider]: ...
+
+    async def get_active_by_channel(
+        self, tenant_id: TenantId, channel: ChannelType
+    ) -> Provider | None:
+        """Highest-priority active provider row for the channel, if any."""
+        ...
 
     async def update(self, provider: Provider) -> None: ...
 
@@ -196,6 +245,14 @@ class DeadLetterRepository(Protocol):
 
     async def add(self, dead_letter: DeadLetter) -> None: ...
 
+    async def get(self, tenant_id: TenantId, dead_letter_id: DeadLetterId) -> DeadLetter | None: ...
+
+    async def list_for_tenant(
+        self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[DeadLetter], int]:
+        """Newest-first page plus the total count."""
+        ...
+
 
 class OutboxRepository(Protocol):
     """Persistence port for the transactional outbox."""
@@ -207,3 +264,42 @@ class OutboxRepository(Protocol):
         ...
 
     async def mark_published(self, entry_ids: Sequence[OutboxEntryId]) -> None: ...
+
+
+class TenantRepository(Protocol):
+    async def add(self, tenant: Tenant) -> None: ...
+    async def get(self, tenant_id: TenantId) -> Tenant | None: ...
+    async def get_by_slug(self, slug: str) -> Tenant | None: ...
+    async def list(self) -> list[Tenant]: ...
+    async def update(self, tenant: Tenant) -> None: ...
+
+
+class UserRepository(Protocol):
+    async def add(self, user: User) -> None: ...
+    async def get(self, user_id: UserId) -> User | None: ...
+    async def get_by_email(self, email: str) -> User | None: ...
+    async def list(self) -> list[User]: ...
+    async def count_platform_admins(self) -> int: ...
+    async def update(self, user: User) -> None: ...
+
+
+class MembershipRepository(Protocol):
+    async def upsert(self, membership: Membership) -> None: ...
+    async def list_for_user(self, user_id: UserId) -> list[Membership]: ...
+    async def list_for_tenant(self, tenant_id: TenantId) -> list[Membership]: ...
+    async def get(self, tenant_id: TenantId, user_id: UserId) -> Membership | None: ...
+    async def delete(self, membership_id: MembershipId) -> bool: ...
+
+
+class ApiKeyRepository(Protocol):
+    async def add(self, key: ApiKey) -> None: ...
+    async def get_by_hash(self, key_hash: str) -> ApiKey | None: ...
+    async def list_for_tenant(self, tenant_id: TenantId) -> list[ApiKey]: ...
+    async def revoke(self, tenant_id: TenantId, key_id: ApiKeyId) -> bool: ...
+
+
+class SessionRepository(Protocol):
+    async def add(self, sess: Session) -> None: ...
+    async def get_by_hash(self, token_hash: str) -> Session | None: ...
+    async def revoke(self, token_hash: str, when: datetime) -> None: ...
+    async def delete_expired(self, now: datetime) -> int: ...

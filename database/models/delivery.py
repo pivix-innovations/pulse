@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Enum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    true,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +50,10 @@ class DeliveryAttemptModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixi
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     next_retry_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    expects_confirmation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
 
     __table_args__ = (
         # One attempt row per (notification x recipient x channel); this is

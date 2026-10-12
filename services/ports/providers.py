@@ -45,5 +45,8 @@ class NotificationProvider(Protocol):
 
     name: str
     channel: ChannelType
+    # False when the provider has no delivery callback/ack path, making
+    # `sent` the terminal state for its attempts.
+    confirms_delivery: bool
 
     async def send(self, message: OutboundMessage) -> SendResult: ...

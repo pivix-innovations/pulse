@@ -3,17 +3,22 @@ from __future__ import annotations
 from typing import Protocol
 
 from services.ports.repositories import (
+    ApiKeyRepository,
     DeadLetterRepository,
     DeliveryAttemptRepository,
     DeviceTokenRepository,
     EventRepository,
+    MembershipRepository,
     MetricsRepository,
     NotificationRepository,
     OutboxRepository,
     PreferenceRepository,
     ProviderRepository,
     RecipientRepository,
+    SessionRepository,
     TemplateRepository,
+    TenantRepository,
+    UserRepository,
     WorkflowRepository,
 )
 
@@ -37,6 +42,11 @@ class UnitOfWork(Protocol):
     templates: TemplateRepository
     providers: ProviderRepository
     metrics: MetricsRepository
+    tenants: TenantRepository
+    users: UserRepository
+    memberships: MembershipRepository
+    api_keys: ApiKeyRepository
+    sessions: SessionRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
 

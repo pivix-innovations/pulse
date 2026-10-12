@@ -11,6 +11,7 @@ from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, OutboxEntryId
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
+from services.settlement import settle_notification
 from workflows.registry import WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -66,10 +67,49 @@ class ReconciliationService:
                 for attempt in (*stale_sent, *stale_failed):
                     await self._reconcile(uow, attempt)
                     handled += 1
+            handled += await self._requeue_stuck(uow, now)
+            handled += await self._settle(uow)
             await uow.commit()
         if handled:
             logger.info("Reconciliation sweep handled %d attempt(s)", handled)
         return handled
+
+    async def _requeue_stuck(self, uow: UnitOfWork, now: datetime) -> int:
+        """Re-publish pending/retrying attempts whose queue job was lost or whose worker died."""
+        stuck = await uow.delivery_attempts.list_stuck(
+            lost_before=now - timedelta(seconds=self._settings.stuck_lost_ttl_seconds),
+            in_doubt_before=now - timedelta(seconds=self._settings.stuck_in_doubt_ttl_seconds),
+            limit=self._settings.batch_size,
+        )
+        for attempt in stuck:
+            attempt.mark_requeued(now)
+            await uow.delivery_attempts.update(attempt)
+            await uow.outbox.add_many(
+                [
+                    OutboxEntry(
+                        id=OutboxEntryId.new(),
+                        tenant_id=attempt.tenant_id,
+                        aggregate_type="delivery_attempt",
+                        aggregate_id=str(attempt.id),
+                        topic=f"deliver.{attempt.channel.value}",
+                        payload={
+                            "attempt_id": str(attempt.id),
+                            "tenant_id": str(attempt.tenant_id),
+                            "channel": attempt.channel.value,
+                        },
+                    )
+                ]
+            )
+            logger.warning("Requeued stuck attempt %s (%s)", attempt.id, attempt.channel.value)
+        return len(stuck)
+
+    async def _settle(self, uow: UnitOfWork) -> int:
+        """Move PROCESSING notifications whose attempts are all terminal to COMPLETED/FAILED."""
+        settled = 0
+        for notification in await uow.notifications.list_settleable(self._settings.batch_size):
+            if await settle_notification(uow, notification.tenant_id, notification.id):
+                settled += 1
+        return settled
 
     async def _reconcile(self, uow: UnitOfWork, attempt: DeliveryAttempt) -> None:
         definition = await self._load_definition(uow, attempt)

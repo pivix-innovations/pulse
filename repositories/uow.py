@@ -6,6 +6,13 @@ from repositories.dead_letter_repository import PostgresDeadLetterRepository
 from repositories.delivery_repository import PostgresDeliveryAttemptRepository
 from repositories.device_token_repository import PostgresDeviceTokenRepository
 from repositories.event_repository import PostgresEventRepository
+from repositories.identity_repository import (
+    PostgresApiKeyRepository,
+    PostgresMembershipRepository,
+    PostgresSessionRepository,
+    PostgresTenantRepository,
+    PostgresUserRepository,
+)
 from repositories.metrics_repository import PostgresMetricsRepository
 from repositories.notification_repository import PostgresNotificationRepository
 from repositories.outbox_repository import PostgresOutboxRepository
@@ -43,6 +50,11 @@ class SqlAlchemyUnitOfWork:
         self.templates = PostgresTemplateRepository(self._session)
         self.providers = PostgresProviderRepository(self._session)
         self.metrics = PostgresMetricsRepository(self._session)
+        self.tenants = PostgresTenantRepository(self._session)
+        self.users = PostgresUserRepository(self._session)
+        self.memberships = PostgresMembershipRepository(self._session)
+        self.api_keys = PostgresApiKeyRepository(self._session)
+        self.sessions = PostgresSessionRepository(self._session)
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

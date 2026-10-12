@@ -14,6 +14,10 @@ class DispatchGuard(Protocol):
         """True if this dispatch is ours to perform; False if already done/in flight."""
         ...
 
+    async def complete(self, key: str) -> None:
+        """Mark the dispatch as done so duplicates stay blocked long-term."""
+        ...
+
     async def release(self, key: str) -> None:
         """Give the key back after a failed dispatch so a retry may proceed."""
         ...

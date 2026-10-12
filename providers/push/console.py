@@ -13,6 +13,7 @@ class ConsolePushProvider(PushProvider):
     """Logs the push payload instead of sending it; for local development."""
 
     name = "console"
+    confirms_delivery = False
 
     async def send(self, message: OutboundMessage) -> SendResult:
         message_id = f"console-{uuid.uuid4()}"

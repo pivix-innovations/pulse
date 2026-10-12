@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import DeliveryAttemptModel
@@ -35,6 +35,8 @@ def _to_entity(row: DeliveryAttemptModel) -> DeliveryAttempt:
         sent_at=row.sent_at,
         delivered_at=row.delivered_at,
         next_retry_at=row.next_retry_at,
+        dispatch_started_at=row.dispatch_started_at,
+        expects_confirmation=row.expects_confirmation,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -60,27 +62,40 @@ class PostgresDeliveryAttemptRepository:
                 subject=a.subject,
                 body=a.body,
                 body_html=a.body_html,
+                next_retry_at=a.next_retry_at,
+                expects_confirmation=a.expects_confirmation,
             )
             for a in attempts
         )
         await self._session.flush()
 
-    async def get(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> DeliveryAttempt | None:
+    async def get(
+        self, tenant_id: TenantId, attempt_id: DeliveryAttemptId, *, for_update: bool = False
+    ) -> DeliveryAttempt | None:
         stmt = select(DeliveryAttemptModel).where(
             DeliveryAttemptModel.tenant_id == tenant_id.value,
             DeliveryAttemptModel.id == attempt_id.value,
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
 
     async def get_by_dispatch(
-        self, notification_id: NotificationId, recipient_id: RecipientId, channel: ChannelType
+        self,
+        notification_id: NotificationId,
+        recipient_id: RecipientId,
+        channel: ChannelType,
+        *,
+        for_update: bool = False,
     ) -> DeliveryAttempt | None:
         stmt = select(DeliveryAttemptModel).where(
             DeliveryAttemptModel.notification_id == notification_id.value,
             DeliveryAttemptModel.recipient_id == recipient_id.value,
             DeliveryAttemptModel.channel == channel,
         )
+        if for_update:
+            stmt = stmt.with_for_update()
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
 
@@ -97,14 +112,48 @@ class PostgresDeliveryAttemptRepository:
             if status is DeliveryStatus.SENT
             else DeliveryAttemptModel.updated_at
         )
+        conditions = [
+            DeliveryAttemptModel.status == status,
+            DeliveryAttemptModel.channel == channel,
+            timestamp < older_than,
+        ]
+        if status is DeliveryStatus.SENT:
+            # `sent` is terminal for providers without delivery callbacks.
+            conditions.append(DeliveryAttemptModel.expects_confirmation.is_(True))
+        stmt = (
+            select(DeliveryAttemptModel)
+            .where(*conditions)
+            .order_by(timestamp)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
+
+    async def list_stuck(
+        self, lost_before: datetime, in_doubt_before: datetime, limit: int
+    ) -> list[DeliveryAttempt]:
+        # Pending/retrying attempts that should have been worked by now:
+        # either never claimed (queue job lost) or claimed with no outcome
+        # recorded (worker died mid-send).
+        due_at = func.coalesce(
+            DeliveryAttemptModel.next_retry_at, DeliveryAttemptModel.updated_at
+        )
         stmt = (
             select(DeliveryAttemptModel)
             .where(
-                DeliveryAttemptModel.status == status,
-                DeliveryAttemptModel.channel == channel,
-                timestamp < older_than,
+                DeliveryAttemptModel.status.in_(
+                    [DeliveryStatus.PENDING, DeliveryStatus.RETRYING]
+                ),
+                or_(
+                    and_(
+                        DeliveryAttemptModel.dispatch_started_at.is_(None),
+                        due_at < lost_before,
+                    ),
+                    DeliveryAttemptModel.dispatch_started_at < in_doubt_before,
+                ),
             )
-            .order_by(timestamp)
+            .order_by(due_at)
             .limit(limit)
             .with_for_update(skip_locked=True)
         )
@@ -155,4 +204,6 @@ class PostgresDeliveryAttemptRepository:
         row.sent_at = attempt.sent_at
         row.delivered_at = attempt.delivered_at
         row.next_retry_at = attempt.next_retry_at
+        row.dispatch_started_at = attempt.dispatch_started_at
+        row.expects_confirmation = attempt.expects_confirmation
         await self._session.flush()

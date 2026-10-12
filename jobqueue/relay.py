@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from config.outbox import OutboxSettings
 from services.ports.publisher import JobPublisher
@@ -40,7 +41,10 @@ class OutboxRelay:
             for entry in entries:
                 try:
                     await self._publisher.enqueue(
-                        entry.topic, entry.payload, job_id=f"outbox:{entry.id}"
+                        entry.topic,
+                        entry.payload,
+                        job_id=f"outbox:{entry.id}",
+                        defer_by_seconds=self._defer_seconds(entry.payload),
                     )
                     published.append(entry.id)
                 except Exception:
@@ -50,6 +54,15 @@ class OutboxRelay:
             if published:
                 logger.info("Relayed %d outbox entr(ies)", len(published))
             return len(published)
+
+    @staticmethod
+    def _defer_seconds(payload: dict) -> float | None:
+        """Quiet-hours holds ride in the payload as an ISO `defer_until`."""
+        raw = payload.get("defer_until")
+        if not raw:
+            return None
+        delay = (datetime.fromisoformat(raw) - datetime.now(timezone.utc)).total_seconds()
+        return delay if delay > 0 else None
 
     async def run(self) -> None:
         logger.info(

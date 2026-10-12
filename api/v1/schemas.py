@@ -42,3 +42,31 @@ class NotificationOut(BaseModel):
     workflow_id: uuid.UUID
     created_at: datetime | None
     attempts: list[DeliveryAttemptOut]
+
+
+class NotificationSummaryOut(BaseModel):
+    id: uuid.UUID
+    status: NotificationStatus
+    event_id: uuid.UUID
+    workflow_id: uuid.UUID
+    scheduled_at: datetime | None
+    created_at: datetime | None
+
+
+class EventOut(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    source: str
+    payload: dict[str, Any]
+    idempotency_key: str | None
+    occurred_at: datetime | None
+    received_at: datetime | None
+
+
+class DeadLetterOut(BaseModel):
+    id: uuid.UUID
+    attempt_id: uuid.UUID
+    notification_id: uuid.UUID
+    channel: ChannelType
+    reason: str
+    created_at: datetime | None

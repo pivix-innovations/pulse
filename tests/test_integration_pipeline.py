@@ -30,8 +30,8 @@ class ChannelProviderMap:
     def __init__(self, providers: dict[ChannelType, FakeProvider]) -> None:
         self.providers = providers
 
-    def get(self, channel: ChannelType) -> FakeProvider:
-        return self.providers[channel]
+    async def resolve(self, uow, tenant_id, channel: ChannelType):
+        return self.providers[channel], None
 
 
 class InlineWorkerPublisher:

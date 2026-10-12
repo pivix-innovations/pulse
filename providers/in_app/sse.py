@@ -15,6 +15,7 @@ class SseInAppProvider(InAppProvider):
     """
 
     name = "sse"
+    confirms_delivery = True
 
     def __init__(self, broadcaster: SseBroadcaster) -> None:
         self._broadcaster = broadcaster

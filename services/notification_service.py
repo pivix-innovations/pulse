@@ -175,11 +175,17 @@ class NotificationService:
             )
             prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
             opted_out = {p.channel for p in prefs if not p.opted_in}
-            attempts.extend(
-                self._build_attempt(notification, recipient, ct)
-                for ct in definition.channels
-                if ct.channel not in opted_out
-            )
+            quiet = {p.channel: p.quiet_hours for p in prefs if p.quiet_hours is not None}
+            now = datetime.now(timezone.utc)
+            for ct in definition.channels:
+                if ct.channel in opted_out:
+                    continue
+                attempt = self._build_attempt(notification, recipient, ct)
+                window = quiet.get(ct.channel)
+                if window is not None:
+                    # Hold until the recipient's quiet window ends.
+                    attempt.next_retry_at = window.window_end(now)
+                attempts.append(attempt)
 
         await uow.delivery_attempts.add_many(attempts)
         await uow.outbox.add_many(
@@ -194,6 +200,11 @@ class NotificationService:
                         "attempt_id": str(a.id),
                         "tenant_id": str(notification.tenant_id),
                         "channel": a.channel.value,
+                        **(
+                            {"defer_until": a.next_retry_at.isoformat()}
+                            if a.next_retry_at is not None
+                            else {}
+                        ),
                     },
                 )
                 for a in attempts

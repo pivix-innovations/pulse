@@ -11,3 +11,6 @@ wheels/
 .env
 .vscode/
 .idea/
+# Makefile runtime state
+.run/
+logs/

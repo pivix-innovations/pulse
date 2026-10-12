@@ -12,6 +12,7 @@ from api.dependencies import get_uow
 from domain.enums import DeliveryStatus
 from providers.webhooks import WebhookParseError, known_provider, parse_webhook
 from repositories.uow import SqlAlchemyUnitOfWork
+from services.settlement import settle_notification
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -74,6 +75,7 @@ async def provider_webhook(
                     continue
                 attempt.mark_failed(update.reason or "provider reported failure")
             await uow.delivery_attempts.update(attempt)
+            await settle_notification(uow, attempt.tenant_id, attempt.notification_id)
             processed += 1
         await uow.commit()
     return WebhookResult(processed=processed)

@@ -11,6 +11,7 @@ from services.ports.providers import OutboundMessage, ProviderSendError, SendRes
 
 class SmtpEmailProvider(EmailProvider):
     name = "smtp"
+    confirms_delivery = False
 
     def __init__(self, settings: EmailSettings) -> None:
         self._settings = settings

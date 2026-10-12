@@ -8,20 +8,27 @@ from config.retry import RetrySettings
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.enums import ChannelType, DeliveryStatus
-from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId
+from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, ProviderId, TenantId
 from jobqueue.retry import compute_backoff
 from services.ports.dispatch_guard import DispatchGuard
 from services.ports.providers import NotificationProvider, OutboundMessage
 from services.ports.publisher import JobPublisher
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
+from services.settlement import settle_notification
 
 logger = logging.getLogger(__name__)
 
 
 class ProviderResolver(Protocol):
-    """Anything with .get(channel) -> NotificationProvider (see providers.registry)."""
+    """
+    Picks the driver for a tenant+channel (see providers.registry): a stored
+    per-tenant provider row if one is active, else the env-configured default.
+    Returns the provider row id too (None for the default) for attribution.
+    """
 
-    def get(self, channel: ChannelType) -> NotificationProvider: ...
+    async def resolve(
+        self, uow: UnitOfWork, tenant_id: TenantId, channel: ChannelType
+    ) -> tuple[NotificationProvider, ProviderId | None]: ...
 
 
 class DeliveryService:
@@ -70,7 +77,14 @@ class DeliveryService:
             if not await self._guard.acquire(attempt.idempotency_key):
                 return "duplicate"
 
-            provider = self._providers.get(attempt.channel)
+            provider, provider_id = await self._providers.resolve(
+                uow, tenant_id, attempt.channel
+            )
+            # Claim: committed before the provider call so a crash mid-send
+            # leaves a marker the reconciliation sweep can find.
+            attempt.mark_dispatching(datetime.now(timezone.utc))
+            await uow.delivery_attempts.update(attempt)
+            await uow.commit()
             try:
                 result = await provider.send(message)
             except Exception as exc:
@@ -81,9 +95,17 @@ class DeliveryService:
                 await uow.commit()
                 return attempt.status.value
 
-            attempt.mark_sent(datetime.now(timezone.utc))
+            attempt.mark_sent(
+                datetime.now(timezone.utc),
+                provider_id=provider_id,
+                expects_confirmation=getattr(provider, "confirms_delivery", True),
+            )
             await uow.delivery_attempts.update(attempt)
+            if not attempt.expects_confirmation:
+                # Fire-and-forget: this may be the last open attempt.
+                await settle_notification(uow, tenant_id, attempt.notification_id)
             await uow.commit()
+            await self._guard.complete(attempt.idempotency_key)
             logger.info(
                 "Attempt %s sent via %s/%s (provider_message_id=%s)",
                 attempt_id,

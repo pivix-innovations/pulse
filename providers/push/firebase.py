@@ -35,6 +35,7 @@ class FcmPushProvider(PushProvider):
     """
 
     name = "fcm"
+    confirms_delivery = True
 
     def __init__(self, settings: PushSettings) -> None:
         self._settings = settings

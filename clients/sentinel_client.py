@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from domain.value_objects.ids import TenantId
-from services.ports.clients import ResolvedRecipient
+from services.ports.clients import ResolvedRecipient, SentinelClient
+from services.ports.uow import UnitOfWorkFactory
 
 
 class InMemorySentinelClient:
@@ -39,3 +40,41 @@ class InMemorySentinelClient:
                 if isinstance(item, dict) and "external_ref" in item
             ]
         return list(self._directory.get(str(tenant_id), []))
+
+
+class DatabaseRecipientClient:
+    """
+    Resolves recipients from inline payload data first (via the wrapped
+    client), then from the local `recipients` table when the payload names
+    one by `recipient_id` / `user_id` / `external_ref`.
+    """
+
+    _REF_KEYS = ("recipient_id", "user_id", "external_ref")
+
+    def __init__(self, uow_factory: UnitOfWorkFactory, inner: SentinelClient | None = None) -> None:
+        self._uow_factory = uow_factory
+        self._inner = inner or InMemorySentinelClient()
+
+    async def resolve_recipients(
+        self, tenant_id: TenantId, event_type: str, payload: Mapping[str, Any]
+    ) -> list[ResolvedRecipient]:
+        resolved = await self._inner.resolve_recipients(tenant_id, event_type, payload)
+        if resolved:
+            return resolved
+
+        ref = next((payload[k] for k in self._REF_KEYS if payload.get(k)), None)
+        if ref is None:
+            return []
+        async with self._uow_factory() as uow:
+            recipient = await uow.recipients.get_by_external_ref(tenant_id, str(ref))
+        if recipient is None:
+            return []
+        return [
+            ResolvedRecipient(
+                external_ref=recipient.external_ref,
+                email=recipient.email,
+                phone=recipient.phone,
+                locale=recipient.locale,
+                timezone=recipient.timezone,
+            )
+        ]

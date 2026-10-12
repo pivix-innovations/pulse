@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import EventModel
@@ -49,3 +49,22 @@ class PostgresEventRepository:
         )
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
+
+    async def list_for_tenant(
+        self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[Event], int]:
+        total = (
+            await self._session.execute(
+                select(func.count()).select_from(EventModel).where(EventModel.tenant_id == tenant_id.value)
+            )
+        ).scalar_one()
+        rows = (
+            await self._session.execute(
+                select(EventModel)
+                .where(EventModel.tenant_id == tenant_id.value)
+                .order_by(EventModel.received_at.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).scalars().all()
+        return [_to_entity(r) for r in rows], total

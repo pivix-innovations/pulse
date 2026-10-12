@@ -200,3 +200,101 @@ async def test_already_sent_attempt_is_skipped():
 
     assert result == "skipped"
     assert provider.sent == []
+
+
+async def test_non_confirming_provider_marks_attempt_terminal_on_send():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant)
+    provider = FakeProvider(confirms_delivery=False)
+
+    await make_service(uow, provider).deliver(tenant, attempt.id)
+
+    assert attempt.status is DeliveryStatus.SENT
+    assert attempt.expects_confirmation is False
+    assert attempt.is_terminal
+    assert attempt.dispatch_started_at is None
+
+
+async def test_claim_is_committed_before_provider_call():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant)
+    seen: dict = {}
+
+    class SpyProvider(FakeProvider):
+        async def send(self, message):
+            seen["claimed"] = attempt.dispatch_started_at is not None
+            seen["commits"] = uow.commits
+            return await super().send(message)
+
+    await make_service(uow, SpyProvider()).deliver(tenant, attempt.id)
+
+    assert seen == {"claimed": True, "commits": 1}
+
+
+async def test_guard_stays_held_after_successful_send():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant)
+    guard = FakeDispatchGuard()
+
+    await make_service(uow, FakeProvider(), guard).deliver(tenant, attempt.id)
+
+    assert attempt.idempotency_key in guard.keys
+
+
+async def test_fire_and_forget_send_settles_notification_immediately():
+    from domain.entities.notification import Notification
+    from domain.enums import NotificationStatus
+    from domain.value_objects.ids import EventId, WorkflowId
+
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant)
+    notification = Notification(
+        id=attempt.notification_id,
+        tenant_id=tenant,
+        event_id=EventId.new(),
+        workflow_id=WorkflowId.new(),
+        status=NotificationStatus.PROCESSING,
+    )
+    uow.notifications.items[str(notification.id)] = notification
+
+    await make_service(uow, FakeProvider(confirms_delivery=False)).deliver(tenant, attempt.id)
+
+    assert notification.status is NotificationStatus.COMPLETED
+
+
+async def test_provider_registry_prefers_tenant_row_and_falls_back_to_default():
+    from config.settings import Settings
+    from domain.entities.provider import Provider
+    from domain.value_objects.ids import ProviderId
+    from providers.registry import ProviderRegistry
+
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    registry = ProviderRegistry(Settings())
+
+    default, default_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
+    assert default_id is None and default.name == "console"
+
+    row = Provider(
+        id=ProviderId.new(),
+        tenant_id=tenant,
+        channel=ChannelType.EMAIL,
+        name="smtp",
+        config={"smtp_host": "mail.tenant.test", "from_address": "x@tenant.test"},
+    )
+    await uow.providers.add(row)
+    stored, stored_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
+    assert stored_id == row.id and stored.name == "smtp"
+    assert stored._settings.smtp_host == "mail.tenant.test"
+
+    # Another tenant is unaffected; an unknown driver name falls back.
+    _, other_id = await registry.resolve(uow, TenantId.new(), ChannelType.EMAIL)
+    assert other_id is None
+    row.name = "nope"
+    row.updated_at = datetime.now(timezone.utc)
+    fallback, fallback_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
+    assert fallback_id is None and fallback.name == "console"

@@ -10,7 +10,7 @@ import asyncio
 import logging
 import signal
 
-from clients.sentinel_client import InMemorySentinelClient
+from clients.sentinel_client import DatabaseRecipientClient
 from config.loader import get_settings
 from database.database import Database
 from jobqueue.producer import ArqJobPublisher, create_arq_pool
@@ -40,7 +40,7 @@ async def main() -> None:
 
     relay = OutboxRelay(uow_factory, ArqJobPublisher(pool), settings.outbox)
     sweep = ReconciliationService(uow_factory, RenderingService(), settings.reconciliation)
-    sentinel = InMemorySentinelClient()
+    sentinel = DatabaseRecipientClient(uow_factory)
     scheduler = SchedulingService(
         uow_factory=uow_factory,
         notifications=NotificationService(
