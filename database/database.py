@@ -22,6 +22,12 @@ class Database:
         if self._engine is None:
             raise RuntimeError("Database has not been initialized")
         return self._engine
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        if self._session_factory is None:
+            raise RuntimeError("Database has not been initialized")
+        return self._session_factory
     
     async def initialize(self) -> None:
         """Create the engine and session factory"""
