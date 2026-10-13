@@ -15,7 +15,9 @@ def _to_entity(row: ProviderModel) -> Provider:
         tenant_id=TenantId(row.tenant_id),
         channel=row.channel,
         name=row.name,
+        label=row.label or row.name,
         config=dict(row.config),
+        secrets_encrypted=row.secrets_encrypted,
         priority=row.priority,
         is_active=row.is_active,
         created_at=row.created_at,
@@ -36,7 +38,9 @@ class PostgresProviderRepository:
                 tenant_id=provider.tenant_id.value,
                 channel=provider.channel,
                 name=provider.name,
+                label=provider.label or provider.name,
                 config=provider.config,
+                secrets_encrypted=provider.secrets_encrypted,
                 priority=provider.priority,
                 is_active=provider.is_active,
             )
@@ -56,6 +60,18 @@ class PostgresProviderRepository:
             select(ProviderModel)
             .where(ProviderModel.tenant_id == tenant_id.value)
             .order_by(ProviderModel.priority.desc(), ProviderModel.created_at)
+        )
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
+
+    async def list_by_ids(
+        self, tenant_id: TenantId, provider_ids: list[ProviderId]
+    ) -> list[Provider]:
+        if not provider_ids:
+            return []
+        stmt = select(ProviderModel).where(
+            ProviderModel.tenant_id == tenant_id.value,
+            ProviderModel.id.in_([p.value for p in provider_ids]),
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
@@ -82,7 +98,9 @@ class PostgresProviderRepository:
             raise LookupError(f"Provider {provider.id} not found for tenant")
         row.channel = provider.channel
         row.name = provider.name
+        row.label = provider.label or provider.name
         row.config = provider.config
+        row.secrets_encrypted = provider.secrets_encrypted
         row.priority = provider.priority
         row.is_active = provider.is_active
         await self._session.flush()

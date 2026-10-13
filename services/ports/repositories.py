@@ -187,6 +187,12 @@ class ProviderRepository(Protocol):
 
     async def list(self, tenant_id: TenantId) -> list[Provider]: ...
 
+    async def list_by_ids(
+        self, tenant_id: TenantId, provider_ids: list[ProviderId]
+    ) -> list[Provider]:
+        """The tenant's providers with these ids (unordered; missing ids are omitted)."""
+        ...
+
     async def get_active_by_channel(
         self, tenant_id: TenantId, channel: ChannelType
     ) -> Provider | None:
@@ -238,6 +244,10 @@ class DeviceTokenRepository(Protocol):
     async def list_for_recipient(
         self, tenant_id: TenantId, recipient_id: RecipientId
     ) -> list[DeviceToken]: ...
+
+    async def delete_tokens(self, tenant_id: TenantId, tokens: list[str]) -> int:
+        """Remove tokens a provider reported dead; returns how many were removed."""
+        ...
 
 
 class DeadLetterRepository(Protocol):

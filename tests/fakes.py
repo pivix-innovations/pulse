@@ -1,6 +1,8 @@
 """In-memory fakes implementing the service ports, for unit tests."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
@@ -346,6 +348,15 @@ class InMemoryDeviceTokenRepository:
         ]
 
 
+    async def delete_tokens(self, tenant_id: TenantId, tokens: list[str]) -> int:
+        doomed = [
+            k for k, t in self.items.items() if t.tenant_id == tenant_id and t.token in tokens
+        ]
+        for k in doomed:
+            del self.items[k]
+        return len(doomed)
+
+
 class InMemoryDeadLetterRepository:
     def __init__(self) -> None:
         self.items: list[DeadLetter] = []
@@ -403,6 +414,14 @@ class InMemoryProviderRepository:
 
     async def list(self, tenant_id: TenantId) -> list[Provider]:
         return [p for p in self.items.values() if p.tenant_id == tenant_id]
+
+    async def list_by_ids(
+        self, tenant_id: TenantId, provider_ids: list[ProviderId]
+    ) -> list[Provider]:
+        wanted = {str(i) for i in provider_ids}
+        return [
+            p for p in self.items.values() if p.tenant_id == tenant_id and str(p.id) in wanted
+        ]
 
     async def get_active_by_channel(
         self, tenant_id: TenantId, channel: ChannelType
@@ -666,14 +685,25 @@ class FakeProvider:
         return SendResult(provider_message_id=f"fake-{len(self.sent)}")
 
 
-class FakeProviderRegistry:
-    def __init__(self, provider: FakeProvider) -> None:
-        self._provider = provider
+@dataclass
+class FakeResolved:
+    provider: FakeProvider
+    provider_id: ProviderId | None = None
+    label: str = "fake"
 
-    async def resolve(
-        self, uow, tenant_id: TenantId, channel: ChannelType
-    ) -> tuple[FakeProvider, ProviderId | None]:
-        return self._provider, None
+
+class FakeProviderRegistry:
+    """Resolves a fixed chain; pass one provider or an ordered list."""
+
+    def __init__(self, provider: FakeProvider | list[FakeProvider]) -> None:
+        providers = provider if isinstance(provider, list) else [provider]
+        self.chain = [
+            FakeResolved(p, ProviderId.new() if len(providers) > 1 else None, f"p{i}")
+            for i, p in enumerate(providers)
+        ]
+
+    async def resolve_chain(self, uow, tenant_id, channel, workflow_id=None):
+        return self.chain
 
 
 class FakeDispatchGuard:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Boolean, Enum, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Enum, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,10 +18,12 @@ class ProviderModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixin):
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    secrets_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "channel", "name", name="uq_providers_tenant_channel_name"),
+        UniqueConstraint("tenant_id", "label", name="uq_providers_tenant_label"),
     )
