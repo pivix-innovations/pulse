@@ -2,7 +2,7 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 222 passing, 6 skipped (`pytest`; the skips are the 5 e2e tests, run with `PULSE_E2E=1`, and 1 LocalStack test, run with `LOCALSTACK_URL`)  
+> **Test Suite**: 222 passing, 7 skipped (`pytest`; the skips are the 6 e2e tests, run with `PULSE_E2E=1`, and 1 LocalStack test, run with `LOCALSTACK_URL`)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
 > **Schema Migrations**: Linear head `e4c7f9a1b624` (10 revisions; SQL generated offline, not yet applied to a live database)
@@ -19,7 +19,7 @@
 | **TODO-1.2** | False Dead-Lettering Fix | **Critical** | **[x] COMPLETED** | Receipt-aware confirmation: `confirms_delivery = False` on SMTP and Console; dynamically set on Resend, SendGrid, Twilio and SES once their receipts are configured (signing key / public URL / SNS topic); `True` on FCM & SSE. Persisted in PostgreSQL. |
 | **TODO-1.3** | Worker Claim Semantics | **Critical** | **[x] COMPLETED** | `attempt.mark_dispatching()` committed before provider send; `_requeue_stuck()` polls `list_stuck()` with `SKIP LOCKED` and re-enqueues outbox entries. |
 | **TODO-2.1** | Dispatch Guard Lockout | **High** | **[x] COMPLETED** | `RedisDispatchGuard`: 180s in-flight lease on `acquire()`, 24h completed key on `complete()`, immediate deletion on `release()`. Crashed workers self-heal. |
-| **TODO-2.2** | Database Providers Runtime | **High** | **[x] COMPLETED** | Replaced static `.env` resolver with dynamic `ProviderRegistry.resolve_chain()`. Loads per-tenant active providers, decrypts secrets, builds drivers dynamically, and records `provider_id`. |
+| **TODO-2.2** | Database Providers Runtime | **High** | **[x] COMPLETED** | Replaced static `.env` resolver with `ProviderRegistry.resolve_chain()`: loads the providers named in the workflow's chain, decrypts secrets, builds drivers dynamically, records `provider_id`, and falls back to the env default. |
 | **TODO-2.3** | Recipient Resolution | **High** | **[x] COMPLETED** | `DatabaseRecipientClient` parses inline recipients or queries `recipients` table by `external_ref` (`recipient_id`/`user_id`/`external_ref`). Wired in `main.py` and `scheduler_worker.py`. |
 | **TODO-3.1** | Quiet Hours Enforcement | **Medium** | **[x] COMPLETED** | `QuietHours.window_end()` handles standard and overnight windows. `fan_out()` sets `next_retry_at`, Outbox carries `defer_until`, and `OutboxRelay` schedules via Arq `_defer_by`. |
 | **TODO-3.2** | Notification & Event Lists | **Medium** | **[x] COMPLETED** | Backend `GET /api/v1/notifications` & `GET /api/v1/events` with pagination and `X-Total-Count`. UI has a recent notifications table with status badges and clickable detail rows. |
@@ -54,6 +54,7 @@
 | **A1** | Full-Stack Smoke Test | **Critical** | **[x] COMPLETED** | `tests/e2e/test_smoke.py` runs the real API, arq workers and scheduler as processes on real Postgres + Redis (throwaway DB per run, real migrations): event → outbox → worker → delivery → settlement, idempotent re-send, and failover + circuit breaker (5 failures open the circuit, the 6th message skips the dead provider). Run with `make e2e`. First run of all 10 migrations on a live database passed; `alembic check` reports no model drift. |
 | **A2** | Worker Claim Crash/Chaos Tests | **Critical** | **[x] COMPLETED** | `tests/e2e/test_chaos.py`: (1) SIGKILL a worker mid-send against a hung relay: the attempt stays pending with its claim, then after lease + in-doubt TTL the sweep requeues it and a restarted worker delivers it once via the operator's re-route; (2) a queued job deleted from Redis is requeued and delivered once. `dispatch_lease_seconds` is now a setting (`PULSE_RETRY__DISPATCH_LEASE_SECONDS`). |
 | **A3** | CI Pipeline | **High** | **[x] COMPLETED** | `.github/workflows/ci.yml`: ruff + unit tests; e2e job on Postgres/Redis service containers with `alembic upgrade head`, `alembic check` and the smoke/chaos suite (logs uploaded on failure); LocalStack SNS job, non-blocking until proven on GitHub runners. Verified locally with env vars only (no `.env`); the workflow itself has not run on GitHub yet. |
+| **G15** | Per-Workflow Provider Isolation | **High** | **[x] COMPLETED** | A saved provider is used only by workflows whose chains name it; a workflow with no usable chain for a channel falls back to the env default, never to another workflow's provider. Removed the tenant-wide "highest priority provider" lookup (`get_active_by_channel`). Found by the chaos suite; covered by unit and e2e tests. |
 | **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
 | **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
 | **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
@@ -64,7 +65,6 @@
 
 | ID | Item | Priority | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **G15** | Workflow Without a Chain Uses Another Workflow's Provider | **High** | **[ ] OPEN** | Found by the chaos suite: a workflow with no `provider_chains` for a channel falls back to the tenant's highest-priority active saved provider, so adding a provider for workflow A silently reroutes workflow B. Decide: fall back to the env default only, or require an explicit chain. |
 | **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
 | **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
