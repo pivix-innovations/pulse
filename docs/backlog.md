@@ -87,7 +87,7 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | G11 | UI: webhook URL panel, provider column and failover trail on attempts | Medium | S | [x] | |
 | G12 | UI: structured workflow editor with drag-to-reorder chains | Medium | M | [x] | Channels, templates, fallbacks and provider chains in a form; "Edit as JSON" kept for anything else. |
 | G13 | Provider health (success rate, latency, last failure) | Medium | M | [x] | Every provider call is logged (outcome + latency; recipient errors excluded) and pruned after 30 days; `GET /providers/health`; status pills in the console. |
-| G14 | Circuit breaker: skip a provider that is down, probe it after a cooldown | High | M | [ ] | Builds on G13 so failover doesn't pay the timeout on every message while a provider is out. |
+| G14 | Circuit breaker: skip a provider that is down, probe it after a cooldown | High | M | [x] | Builds on G13 so failover doesn't pay the timeout on every message while a provider is out. |
 | H1 | Push error classification (retryable / permanent / failover) | High | S | [x] | Timeouts and 5xx fail over; invalid tokens do not. |
 | H2 | Deactivate stale device tokens on `UNREGISTERED` | High | S | [x] | Stop retrying dead tokens on every send. |
 | H3 | FCM per-provider app instances (no process-global init) | High | S | [x] | Credentials come from the saved provider's secrets. |

@@ -2,7 +2,7 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 207 passing, 1 skipped (`pytest`; the skipped test needs LocalStack, see `tests/integration/`)  
+> **Test Suite**: 222 passing, 1 skipped (`pytest`; the skipped test needs LocalStack, see `tests/integration/`)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
 > **Schema Migrations**: Linear head `e4c7f9a1b624` (10 revisions; SQL generated offline, not yet applied to a live database)
@@ -50,6 +50,7 @@
 | **G10** | Amazon SES Delivery/Bounce via SNS | **Medium** | **[x] COMPLETED** | `parse_ses` in `providers/receipts.py` + `providers/sns.py`: verifies SNS signatures (certs only from AWS SNS hosts; message pinned to the provider's topic ARN), auto-confirms the subscription, maps Delivery / permanent Bounce / Reject. Real-SNS flow verified with LocalStack (`tests/integration`); SES v2 sending is unavailable in free LocalStack. |
 | **G12** | Structured Workflow Editor | **Medium** | **[x] COMPLETED** | Form for channels, templates, fallbacks and drag-to-reorder provider chains; "Edit as JSON" retained. |
 | **G13** | Provider Health | **Medium** | **[x] COMPLETED** | `provider_calls` log (outcome + latency; recipient errors excluded; pruned after 30 days), `GET /api/v1/providers/health`, status pills in the console. Migration `e4c7f9a1b624`. |
+| **G14** | Provider Circuit Breaker | **High** | **[x] COMPLETED** | `RedisCircuitBreaker` (`jobqueue/circuit_breaker.py`): 5 consecutive provider failures open the circuit for 60s, then a single probe message tests recovery; shared across workers; recipient errors never count; if every circuit is open the chain is tried anyway; breaker faults never fail a delivery. State shown in provider health. Settings: `PULSE_BREAKER__*`. |
 | **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
 | **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
 | **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
@@ -60,7 +61,6 @@
 
 | ID | Item | Priority | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **G14** | Provider Circuit Breaker | High | M | **[~] IN PROGRESS** | Skip a provider that is down and probe it after a cooldown, so failover does not pay the timeout on every message during an outage. |
 | **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
 | **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
@@ -108,7 +108,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **207 passing tests** in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **222 passing tests** in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
