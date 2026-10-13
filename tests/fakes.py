@@ -13,6 +13,7 @@ from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
 from domain.entities.inbox import InboxMessage
+from domain.entities.step_run import StepRun, StepRunStatus
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
 from domain.entities.provider import Provider
@@ -448,6 +449,53 @@ class InMemoryInboxRepository:
         return len(gone)
 
 
+class InMemoryStepRunRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, StepRun] = {}
+
+    async def add(self, run: StepRun) -> bool:
+        if any(
+            r.notification_id == run.notification_id and r.recipient_id == run.recipient_id
+            and r.step_id == run.step_id
+            for r in self.items.values()
+        ):
+            return False
+        self.items[str(run.id)] = run
+        return True
+
+    async def get(self, notification_id, recipient_id, step_id):
+        return next(
+            (r for r in self.items.values()
+             if r.notification_id == notification_id and r.recipient_id == recipient_id and r.step_id == step_id),
+            None,
+        )
+
+    async def list_for_notification(self, tenant_id, notification_id):
+        runs = [r for r in self.items.values() if r.tenant_id == tenant_id and r.notification_id == notification_id]
+        return sorted(runs, key=lambda r: (str(r.recipient_id), r.step_index))
+
+    async def claim_due(self, now, limit):
+        due = [r for r in self.items.values() if r.status is StepRunStatus.SCHEDULED and r.run_at <= now]
+        return sorted(due, key=lambda r: r.run_at)[:limit]
+
+    async def has_open(self, notification_id):
+        return any(
+            r.notification_id == notification_id and r.status is StepRunStatus.SCHEDULED
+            for r in self.items.values()
+        )
+
+    async def save(self, run):
+        self.items[str(run.id)] = run
+
+    async def cancel_open(self, notification_id, reason, at):
+        n = 0
+        for r in self.items.values():
+            if r.notification_id == notification_id and r.status is StepRunStatus.SCHEDULED:
+                r.mark_skipped(reason, at)
+                n += 1
+        return n
+
+
 class InMemoryDeviceTokenRepository:
     def __init__(self) -> None:
         self.items: dict[str, DeviceToken] = {}
@@ -811,6 +859,7 @@ class InMemoryUnitOfWork:
         self.recipients = InMemoryRecipientRepository()
         self.outbox = InMemoryOutboxRepository()
         self.inbox = InMemoryInboxRepository()
+        self.step_runs = InMemoryStepRunRepository()
         self.device_tokens = InMemoryDeviceTokenRepository()
         self.dead_letters = InMemoryDeadLetterRepository()
         self.templates = InMemoryTemplateRepository()

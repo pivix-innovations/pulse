@@ -18,6 +18,7 @@ from database.models.provider import ProviderModel
 from database.models.provider_call import ProviderCallModel
 from database.models.recipient import RecipientModel
 from database.models.template import TemplateModel
+from database.models.step_run import WorkflowStepRunModel
 from database.models.workflow import WorkflowModel
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "TenantModel",
     "UserModel",
     "WorkflowModel",
+    "WorkflowStepRunModel",
 ]

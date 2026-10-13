@@ -17,6 +17,7 @@ from domain.entities.preference import Preference
 from domain.entities.provider import Provider
 from domain.entities.provider_call import ProviderCall
 from domain.entities.recipient import Recipient
+from domain.entities.step_run import StepRun
 from domain.entities.template import Template
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
@@ -419,3 +420,31 @@ class InboxRepository(Protocol):
     ) -> bool: ...
 
     async def prune(self, created_before: datetime, archived_before: datetime) -> int: ...
+
+
+class StepRunRepository(Protocol):
+    """Persistence port for multi-step workflow progress."""
+
+    async def add(self, run: StepRun) -> bool:
+        """Insert; False when (notification, recipient, step) already has a run."""
+        ...
+
+    async def get(
+        self, notification_id: NotificationId, recipient_id: RecipientId, step_id: str
+    ) -> StepRun | None: ...
+
+    async def list_for_notification(
+        self, tenant_id: TenantId, notification_id: NotificationId
+    ) -> list[StepRun]: ...
+
+    async def claim_due(self, now: datetime, limit: int) -> list[StepRun]:
+        """Lock and return scheduled runs whose time has come (skip rows other schedulers hold)."""
+        ...
+
+    async def has_open(self, notification_id: NotificationId) -> bool:
+        """Is any step of this notification still waiting to run?"""
+        ...
+
+    async def save(self, run: StepRun) -> None: ...
+
+    async def cancel_open(self, notification_id: NotificationId, reason: str, at: datetime) -> int: ...

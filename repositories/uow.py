@@ -22,6 +22,7 @@ from repositories.preference_repository import PostgresPreferenceRepository
 from repositories.provider_call_repository import PostgresProviderCallRepository
 from repositories.provider_repository import PostgresProviderRepository
 from repositories.recipient_repository import PostgresRecipientRepository
+from repositories.step_run_repository import PostgresStepRunRepository
 from repositories.template_repository import PostgresTemplateRepository
 from repositories.workflow_repository import PostgresWorkflowRepository
 
@@ -49,6 +50,7 @@ class SqlAlchemyUnitOfWork:
         self.recipients = PostgresRecipientRepository(self._session)
         self.outbox = PostgresOutboxRepository(self._session)
         self.inbox = PostgresInboxRepository(self._session)
+        self.step_runs = PostgresStepRunRepository(self._session)
         self.device_tokens = PostgresDeviceTokenRepository(self._session)
         self.dead_letters = PostgresDeadLetterRepository(self._session)
         self.templates = PostgresTemplateRepository(self._session)

@@ -19,6 +19,7 @@ from services.ports.repositories import (
     ProviderRepository,
     RecipientRepository,
     SessionRepository,
+    StepRunRepository,
     TemplateRepository,
     TenantRepository,
     UserRepository,
@@ -41,6 +42,7 @@ class UnitOfWork(Protocol):
     recipients: RecipientRepository
     outbox: OutboxRepository
     inbox: InboxRepository
+    step_runs: StepRunRepository
     device_tokens: DeviceTokenRepository
     dead_letters: DeadLetterRepository
     templates: TemplateRepository
