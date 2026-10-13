@@ -28,3 +28,5 @@ class ReconciliationSettings(ConfigSection):
     # Inbox messages are dropped this long after creation, or after archiving.
     inbox_retention_days: PositiveInt = 90
     inbox_archived_retention_days: PositiveInt = 7
+    # How often the scheduler looks for workflow steps that have come due.
+    step_poll_seconds: float = 2.0

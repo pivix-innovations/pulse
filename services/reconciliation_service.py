@@ -64,7 +64,12 @@ class ReconciliationService:
                 stale_failed = await uow.delivery_attempts.list_stale(
                     DeliveryStatus.FAILED, channel, now, self._settings.batch_size
                 )
-                for attempt in (*stale_sent, *stale_failed):
+                for attempt in stale_sent:
+                    if await uow.step_runs.has_open(attempt.notification_id):
+                        continue   # a sequence is still running: its next step may be the answer
+                    await self._reconcile(uow, attempt)
+                    handled += 1
+                for attempt in stale_failed:
                     await self._reconcile(uow, attempt)
                     handled += 1
             handled += await self._requeue_stuck(uow, now)

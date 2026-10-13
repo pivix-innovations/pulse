@@ -21,6 +21,7 @@ from services.notification_service import NotificationService
 from services.reconciliation_service import ReconciliationService
 from services.rendering_service import RenderingService
 from services.scheduling_service import SchedulingService
+from services.sequence_service import SequenceEngine, StepRunner
 from telemetry.metrics import (
     OperationsCollector,
     build_queue_depth_fn,
@@ -61,7 +62,21 @@ async def main() -> None:
         sentinel=sentinel,
     )
 
+    steps = StepRunner(uow_factory, SequenceEngine(RenderingService()), settings.reconciliation)
+
     stop = asyncio.Event()
+
+    async def step_loop() -> None:
+        logger.info("Workflow step runner started (interval=%.1fs)", settings.reconciliation.step_poll_seconds)
+        while not stop.is_set():
+            try:
+                await steps.run_due_once()
+            except Exception:
+                logger.exception("Workflow step cycle failed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=settings.reconciliation.step_poll_seconds)
+            except asyncio.TimeoutError:
+                pass
 
     async def sweep_loop() -> None:
         logger.info(
@@ -138,6 +153,7 @@ async def main() -> None:
         asyncio.create_task(relay.run()),
         asyncio.create_task(sweep_loop()),
         asyncio.create_task(schedule_loop()),
+        asyncio.create_task(step_loop()),
         asyncio.create_task(prune_loop()),
     ]
     await stop.wait()

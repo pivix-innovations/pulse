@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import DeliveryAttemptModel, NotificationModel
+from database.models import DeliveryAttemptModel, NotificationModel, WorkflowStepRunModel
 from domain.entities.notification import Notification
 from domain.enums import DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import EventId, NotificationId, TenantId, WorkflowId
@@ -99,6 +99,13 @@ class PostgresNotificationRepository:
             .where(
                 NotificationModel.status == NotificationStatus.PROCESSING,
                 ~exists(open_attempt),
+                # A sequence with steps still to run is not finished.
+                ~exists(
+                    select(WorkflowStepRunModel.id).where(
+                        WorkflowStepRunModel.notification_id == NotificationModel.id,
+                        WorkflowStepRunModel.status == "scheduled",
+                    )
+                ),
             )
             .order_by(NotificationModel.created_at)
             .limit(limit)

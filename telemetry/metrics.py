@@ -43,6 +43,9 @@ class PulseMetrics:
         self.dead_letters = meter.create_counter(
             "pulse.dead_letters", unit="{attempt}", description="Attempts moved to the dead-letter table"
         )
+        self.workflow_steps = meter.create_counter(
+            "pulse.workflow.steps", unit="{step}", description="Multi-step workflow steps run (done/skipped)"
+        )
         self.provider_calls = meter.create_counter(
             "pulse.provider.calls", unit="{call}", description="Provider send calls by outcome"
         )
