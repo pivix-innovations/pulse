@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from config.base import EnvironmentSettings
+from config.breaker import BreakerSettings
 from config.app import AppSettings
 from config.api import ApiSettings
 from config.email import EmailSettings
@@ -28,5 +29,6 @@ class Settings(EnvironmentSettings):
     outbox: OutboxSettings = OutboxSettings()
     push: PushSettings = PushSettings()
     retry: RetrySettings = RetrySettings()
+    breaker: BreakerSettings = BreakerSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
     webhook: WebhookSettings = WebhookSettings()
