@@ -318,6 +318,37 @@ class InMemoryRecipientRepository:
         return recipient
 
 
+class InMemoryOperationsRepository:
+    def __init__(self, uow: "InMemoryUnitOfWork") -> None:
+        self._uow = uow
+
+    async def snapshot(self, now, lost_before, in_doubt_before):
+        from domain.entities.operations import OperationsSnapshot
+
+        pending = [e for e in self._uow.outbox.items.values() if e.status is OutboxStatus.PENDING]
+        oldest = min((e.created_at for e in pending if e.created_at), default=None)
+        open_attempts: dict = {}
+        stuck = 0
+        for a in self._uow.delivery_attempts.items.values():
+            if a.status in (DeliveryStatus.PENDING, DeliveryStatus.RETRYING, DeliveryStatus.SENT):
+                key = (a.channel, a.status)
+                open_attempts[key] = open_attempts.get(key, 0) + 1
+            if a.status in (DeliveryStatus.PENDING, DeliveryStatus.RETRYING):
+                started = getattr(a, "dispatch_started_at", None)
+                due = getattr(a, "next_retry_at", None) or getattr(a, "updated_at", None)
+                if (started is None and due is not None and due < lost_before) or (
+                    started is not None and started < in_doubt_before
+                ):
+                    stuck += 1
+        return OperationsSnapshot(
+            outbox_pending=len(pending),
+            outbox_oldest_age_seconds=max((now - oldest).total_seconds(), 0.0) if oldest else 0.0,
+            open_attempts=open_attempts,
+            stuck_attempts=stuck,
+            dead_letters=len(self._uow.dead_letters.items),
+        )
+
+
 class InMemoryOutboxRepository:
     def __init__(self) -> None:
         self.items: dict[str, OutboxEntry] = {}
@@ -703,6 +734,7 @@ class InMemoryUnitOfWork:
         self.providers = InMemoryProviderRepository()
         self.provider_calls = InMemoryProviderCallRepository()
         self.metrics = InMemoryMetricsRepository(self)
+        self.operations = InMemoryOperationsRepository(self)
         self.tenants = InMemoryTenantRepository()
         self.users = InMemoryUserRepository()
         self.memberships = InMemoryMembershipRepository()

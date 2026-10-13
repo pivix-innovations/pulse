@@ -11,6 +11,7 @@ from services.ports.repositories import (
     MembershipRepository,
     MetricsRepository,
     NotificationRepository,
+    OperationsRepository,
     OutboxRepository,
     PreferenceRepository,
     ProviderCallRepository,
@@ -44,6 +45,7 @@ class UnitOfWork(Protocol):
     providers: ProviderRepository
     provider_calls: ProviderCallRepository
     metrics: MetricsRepository
+    operations: OperationsRepository
     tenants: TenantRepository
     users: UserRepository
     memberships: MembershipRepository

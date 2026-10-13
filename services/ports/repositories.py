@@ -10,6 +10,7 @@ from domain.entities.device import DeviceToken
 from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
+from domain.entities.operations import OperationsSnapshot
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
 from domain.entities.provider import Provider
@@ -358,3 +359,11 @@ class SessionRepository(Protocol):
     async def get_by_hash(self, token_hash: str) -> Session | None: ...
     async def revoke(self, token_hash: str, when: datetime) -> None: ...
     async def delete_expired(self, now: datetime) -> int: ...
+
+
+class OperationsRepository(Protocol):
+    """Cross-tenant pipeline health, for operators (gauges and alerts)."""
+
+    async def snapshot(
+        self, now: datetime, lost_before: datetime, in_doubt_before: datetime
+    ) -> OperationsSnapshot: ...

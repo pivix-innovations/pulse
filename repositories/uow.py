@@ -15,6 +15,7 @@ from repositories.identity_repository import (
 )
 from repositories.metrics_repository import PostgresMetricsRepository
 from repositories.notification_repository import PostgresNotificationRepository
+from repositories.operations_repository import PostgresOperationsRepository
 from repositories.outbox_repository import PostgresOutboxRepository
 from repositories.preference_repository import PostgresPreferenceRepository
 from repositories.provider_call_repository import PostgresProviderCallRepository
@@ -52,6 +53,7 @@ class SqlAlchemyUnitOfWork:
         self.providers = PostgresProviderRepository(self._session)
         self.provider_calls = PostgresProviderCallRepository(self._session)
         self.metrics = PostgresMetricsRepository(self._session)
+        self.operations = PostgresOperationsRepository(self._session)
         self.tenants = PostgresTenantRepository(self._session)
         self.users = PostgresUserRepository(self._session)
         self.memberships = PostgresMembershipRepository(self._session)
