@@ -233,3 +233,20 @@ async def test_health_endpoint_reports_per_provider_status(world):
     by_id = {h["provider_id"]: h for h in r.json()}
     assert by_id[busy]["status"] == "down" and by_id[busy]["last_error"] == "503 from upstream"
     assert by_id[quiet]["status"] == "idle" and by_id[quiet]["success_rate"] is None
+
+
+async def test_health_reports_an_open_circuit(world):
+    class OpenBreaker:
+        async def state(self, provider_id):
+            return "open"
+
+    world.app.state.circuit_breaker = OpenBreaker()
+    await create(world, {"channel": "sms", "name": "console", "label": "Flaky"})
+    r = await world.client.get("/api/v1/providers/health", headers=world.key_headers)
+    assert [h["circuit"] for h in r.json()] == ["open"]
+
+
+async def test_health_circuit_defaults_to_closed_without_a_breaker(world):
+    await create(world, {"channel": "sms", "name": "console", "label": "Fine"})
+    r = await world.client.get("/api/v1/providers/health", headers=world.key_headers)
+    assert [h["circuit"] for h in r.json()] == ["closed"]

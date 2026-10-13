@@ -5,6 +5,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
+
+from jobqueue.circuit_breaker import RedisCircuitBreaker
 from sqlalchemy.exc import IntegrityError
 
 from api.v1.admin import router as admin_router
@@ -51,6 +53,7 @@ async def lifespan(app: FastAPI):
         password=settings.redis.password,
     )
     app.state.sse_registry = SseConnectionRegistry(app.state.redis)
+    app.state.circuit_breaker = RedisCircuitBreaker(app.state.redis, settings.breaker)
 
     def uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(app.state.database.session_factory)

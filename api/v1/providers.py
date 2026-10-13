@@ -258,10 +258,13 @@ class ProviderHealthOut(BaseModel):
     last_success_at: datetime | None
     last_failure_at: datetime | None
     last_error: str | None
+    # Circuit breaker: "open" means Pulse is currently skipping this provider.
+    circuit: str = "closed"
 
 
 @router.get("/health", response_model=list[ProviderHealthOut])
 async def providers_health(
+    request: Request,
     window_hours: int = Query(default=24, ge=1, le=24 * 30),
     tenant_id: TenantId = Depends(require_tenant),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
@@ -275,10 +278,17 @@ async def providers_health(
     async with uow:
         providers = await uow.providers.list(tenant_id)
         stats = await uow.provider_calls.stats(tenant_id, since)
+    breaker = getattr(request.app.state, "circuit_breaker", None)
     out = []
     for p in providers:
         h = assess(stats.get(p.id))
-        out.append(ProviderHealthOut(provider_id=p.id.value, window_hours=window_hours, **{
+        circuit = "closed"
+        if breaker is not None:
+            try:
+                circuit = await breaker.state(p.id)
+            except Exception:  # Redis hiccup must not break the health page
+                circuit = "closed"
+        out.append(ProviderHealthOut(provider_id=p.id.value, window_hours=window_hours, circuit=circuit, **{
             k: getattr(h, k) for k in (
                 "status", "calls", "failures", "success_rate", "avg_latency_ms",
                 "p95_latency_ms", "last_success_at", "last_failure_at", "last_error",
