@@ -910,6 +910,11 @@ function renderLookup(el) {
             </table>`}
           </div>
         </div>
+        ${n.digest ? `<div class="card"><div class="card-head"><div class="card-title">Digest</div></div>
+          <div class="card-body">${n.digest.is_anchor
+            ? `This notification carries the digest: ${n.digest.item_count} event(s) ${n.digest.status === "open" ? `being collected, sent at <b>${esc(fmtDate(n.digest.flush_at))}</b>` : `sent together at ${esc(fmtDate(n.digest.flush_at))}`}.`
+            : `This event was folded into the digest carried by ${shortId(n.digest.anchor_notification_id)} (${n.digest.status === "open" ? "not sent yet" : "sent"}).`}
+          </div></div>` : ""}
         ${(n.steps || []).length ? `<div class="card">
           <div class="card-head"><div class="card-title">Sequence steps (${n.steps.length})</div></div>
           <div class="card-body flush table-wrap"><table>
@@ -1197,7 +1202,9 @@ function wfStateFromDefinition(def = {}) {
     ...(def.channels || []).map(c => ({ ...c, fallbackOnly: false })),
     ...(def.fallback_templates || []).map(c => ({ ...c, fallbackOnly: true })),
   ].map(c => ({ channel: c.channel, subject: c.subject || "", body: c.body || "", format: c.format || "markdown", fallbackOnly: c.fallbackOnly }));
-  return { channels, fallbacks: { ...(def.fallbacks || {}) }, chains: JSON.parse(JSON.stringify(def.provider_chains || {})) };
+  const d = def.digest || null;
+  const digest = d ? { window: d.window || (d.window_seconds ? `${d.window_seconds}s` : "10m"), max_items: d.max_items || 100, key: d.key || "" } : null;
+  return { channels, fallbacks: { ...(def.fallbacks || {}) }, chains: JSON.parse(JSON.stringify(def.provider_chains || {})), digest };
 }
 
 function wfDefinition(st) {
@@ -1209,6 +1216,7 @@ function wfDefinition(st) {
   };
   const fb = st.channels.filter(c => c.fallbackOnly).map(enc);
   if (fb.length) def.fallback_templates = fb;
+  if (st.digest) def.digest = { window: st.digest.window || "10m", max_items: +st.digest.max_items || 100, ...(st.digest.key ? { key: st.digest.key } : {}) };
   const chains = Object.fromEntries(Object.entries(st.chains).filter(([ch, ids]) => ids.length && present.has(ch)));
   if (Object.keys(chains).length) def.provider_chains = chains;
   return def;
@@ -1317,6 +1325,15 @@ function mountWorkflowEditor(root, saved, initialDef) {
     host.innerHTML = `
       <div class="muted" style="font-size:12px;margin-bottom:10px">Messages are templates: use <code>{{ recipient.external_ref }}</code> and any field from the event payload, e.g. <code>{{ plan }}</code>.</div>
       ${st.channels.map(channelHtml).join("") || `<div class="chain-note" style="margin-bottom:10px">No channels yet — add the first one below.</div>`}
+      <div class="card" style="margin:12px 0;padding:12px">
+        <label class="check"><input type="checkbox" id="wf-digest" ${st.digest ? "checked" : ""}> Batch events into a digest <span class="muted" style="font-weight:400">— one message per recipient instead of one per event</span></label>
+        ${st.digest ? `<div class="row" style="margin-top:10px">
+          <div class="field"><label>Send after</label><input data-dg="window" value="${esc(st.digest.window)}" placeholder="10m"></div>
+          <div class="field"><label>…or once this many events</label><input data-dg="max_items" type="number" min="2" max="1000" value="${esc(st.digest.max_items)}"></div>
+          <div class="field"><label>Group by field <span class="muted" style="font-weight:400">(optional)</span></label><input data-dg="key" value="${esc(st.digest.key)}" placeholder="post_id"></div>
+        </div>
+        <div class="muted" style="font-size:12px">Templates can use <code>{{ digest.count }}</code>, <code>{% for e in digest.items %}…{% endfor %}</code>, <code>digest.first</code> and <code>digest.last</code>; other variables come from the latest event.</div>` : ""}
+      </div>
       <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
         ${free.length ? `<select id="wf-add-ch"><option value="">+ Add a channel…</option>${free.map(ch => `<option value="${ch}">${chLabel(ch)}</option>`).join("")}</select>` : `<span></span>`}
         <span style="display:flex;gap:8px">
@@ -1324,6 +1341,10 @@ function mountWorkflowEditor(root, saved, initialDef) {
           <button type="button" class="btn sm" id="wf-json-btn">Edit as JSON</button>
         </span>
       </div>`;
+    host.querySelector("#wf-digest")?.addEventListener("change", e => {
+      st.digest = e.target.checked ? { window: "10m", max_items: 100, key: "" } : null; draw();
+    });
+    host.querySelectorAll("[data-dg]").forEach(el => el.addEventListener("input", () => { st.digest[el.dataset.dg] = el.value; sync(); }));
     host.querySelector("#wf-seq-btn")?.addEventListener("click", () => {
       if (st.channels.length && !confirm("Switch to a sequence? The channels above are replaced by the example steps.")) return;
       sequence = true; jsonMode = true; initialDef = SEQUENCE_EXAMPLE; delete host.dataset.edited; draw();
@@ -1412,7 +1433,7 @@ function renderWorkflows(el) {
           return `<tr>
             <td style="font-weight:550">${esc(w.name)}<div class="muted" style="font-weight:400">${shortId(w.id)}</div></td>
             <td class="mono">${esc(w.event_type)}</td>
-            <td>${steps.length ? `<span class="muted" style="font-size:12px">sequence:</span> ${channels.map(c => badge(chLabel(c))).join(" → ")}` : (channels.map(c => badge(chLabel(c))).join(" ") || "—")}</td>
+            <td>${w.definition.digest ? `<span class="muted" style="font-size:12px">digest ${esc(w.definition.digest.window || (w.definition.digest.window_seconds + "s"))}:</span> ` : ""}${steps.length ? `<span class="muted" style="font-size:12px">sequence:</span> ${channels.map(c => badge(chLabel(c))).join(" → ")}` : (channels.map(c => badge(chLabel(c))).join(" ") || "—")}</td>
             <td>${boolBadge(w.is_active)}</td>
             <td class="muted">${esc(fmtDate(w.updated_at || w.created_at))}</td>
             <td style="text-align:right;white-space:nowrap">
