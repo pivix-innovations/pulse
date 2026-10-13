@@ -1096,8 +1096,11 @@ function renderLive(el) {
 
 /* ═══ Templates ═══════════════════════════════════════════ */
 
-function templateForm(t = {}) {
+function templateForm(t = {}, { creating = false } = {}) {
   return `
+    <div class="chain-note" style="margin-bottom:12px">${creating
+      ? "Workflows send the <b>published</b> version of a template. Save as a draft to work on it, or publish straight away."
+      : "Saving changes the <b>draft</b>. Workflows keep sending the published version (<b>" + (t.published_version ? "v" + t.published_version : "none yet") + "</b>) until you publish."}</div>
     <div class="field"><label>Name</label><input name="name" required value="${esc(t.name || "")}" placeholder="welcome-email"></div>
     <div class="row">
       <div class="field"><label>Channel</label>
@@ -1112,7 +1115,8 @@ function templateForm(t = {}) {
       <input name="subject" value="${esc(t.subject || "")}" placeholder="Welcome, {{ name }}!"></div>
     <div class="field"><label>Body <span class="muted" style="font-weight:400">(Jinja2)</span></label>
       <textarea name="body" rows="8" required placeholder="Hi {{ name }}, …">${esc(t.body || "")}</textarea></div>
-    <label class="check"><input type="checkbox" name="is_active" ${t.is_active !== false ? "checked" : ""}> Active</label>`;
+    <label class="check"><input type="checkbox" name="is_active" ${t.is_active !== false ? "checked" : ""}> Active</label>
+    ${creating ? `<label class="check" style="margin-top:8px"><input type="checkbox" name="publish"> Publish immediately</label>` : ""}`;
 }
 
 function templateFromForm(fd) {
@@ -1120,7 +1124,90 @@ function templateFromForm(fd) {
     name: fd.get("name"), channel: fd.get("channel"), format: fd.get("format"),
     locale: fd.get("locale") || "en", subject: fd.get("subject") || null,
     body: fd.get("body"), is_active: fd.get("is_active") === "on",
+    ...(fd.has("publish") ? { publish: fd.get("publish") === "on" } : {}),
   };
+}
+
+/* Preview: render a template with sample data, exactly as a message is built. */
+function sampleDataFor(t) {
+  // Start from the variables the template uses, so the first render is not full of blanks.
+  const text = `${t.subject || ""} ${t.body || ""}`;
+  const names = new Set();
+  for (const m of text.matchAll(/\{\{\s*([a-zA-Z_][\w]*)/g)) names.add(m[1]);
+  for (const m of text.matchAll(/\{%-?\s*if\s+([a-zA-Z_][\w]*)/g)) names.add(m[1]);
+  ["recipient", "digest", "loop", "range", "true", "false", "none", "not"].forEach(n => names.delete(n));
+  const data = Object.fromEntries([...names].map(n => [n, `sample ${n}`]));
+  return JSON.stringify(Object.keys(data).length ? data : { plan: "pro" }, null, 2);
+}
+
+function openTemplatePreview(t) {
+  const hasLive = t.published_version != null;
+  openModal(`Preview · ${t.name}`, `
+    <div class="row">
+      <div class="field"><label>Version</label><select id="pv-version">
+        <option value="draft">Draft (what you are editing)</option>
+        ${hasLive ? `<option value="published" selected>Published (v${t.published_version}, what is sent)</option>` : ""}
+      </select></div>
+      <div class="field"><label>Recipient locale</label><input id="pv-locale" value="${esc(t.locale || "en")}"></div>
+    </div>
+    <div class="field"><label>Sample event data <span class="muted" style="font-weight:400">(JSON, the event payload)</span></label>
+      <textarea id="pv-data" rows="5" spellcheck="false">${esc(sampleDataFor(t))}</textarea></div>
+    <label class="check" style="margin-bottom:10px"><input type="checkbox" id="pv-digest"> Simulate a digest of 3 events (uses the data above for each)</label>
+    <button type="button" class="btn primary" id="pv-go">Render</button>
+    <div id="pv-out" style="margin-top:14px"></div>`, { submitLabel: "Close", onSubmit: async () => {}, width: "720px" });
+  const root = $("#modal-root");
+  const run = async () => {
+    const out = $("#pv-out", root);
+    let data;
+    try { data = JSON.parse($("#pv-data", root).value || "{}"); } catch { out.innerHTML = `<div class="chain-note" style="color:var(--err,#f87171)">The sample data is not valid JSON.</div>`; return; }
+    try {
+      const r = await api(`/templates/${t.id}/preview`, { method: "POST", body: JSON.stringify({
+        data, version: $("#pv-version", root).value,
+        recipient: { locale: $("#pv-locale", root).value || "en" },
+        ...($("#pv-digest", root).checked ? { digest: [data, data, data] } : {}),
+      }) });
+      out.innerHTML = `
+        ${r.subject != null ? `<div class="muted" style="font-size:12px">Subject</div><div style="font-weight:600;margin-bottom:10px">${esc(r.subject)}</div>` : ""}
+        <div class="muted" style="font-size:12px">Text</div><pre style="white-space:pre-wrap;margin:0 0 10px">${esc(r.text)}</pre>
+        ${r.html ? `<div class="muted" style="font-size:12px">HTML</div><iframe sandbox="" style="width:100%;height:180px;border:1px solid var(--border,#2a2a35);border-radius:8px;background:#fff" srcdoc="${esc(r.html)}"></iframe>` : ""}
+        <div class="muted" style="font-size:12px;margin-top:6px">Rendered ${esc(r.version === "draft" ? "the draft" : "version " + r.version)}</div>`;
+    } catch (err) { out.innerHTML = `<div class="chain-note" style="color:var(--err,#f87171)">${esc(err.message)}</div>`; }
+  };
+  $("#pv-go", root).addEventListener("click", run);
+  run();
+}
+
+/* History: every version, what is live, and one-click rollback. */
+async function openTemplateHistory(t, reload) {
+  let versions;
+  try { versions = await api(`/templates/${t.id}/versions`); }
+  catch (err) { toast(err.message, "err"); return; }
+  openModal(`History · ${t.name}`, versions.length === 0
+    ? emptyState("Nothing published yet", "Publish the draft to create version 1.")
+    : `<div class="table-wrap"><table><thead><tr><th>Version</th><th>When</th><th>Note</th><th></th></tr></thead><tbody>
+      ${versions.map(v => `<tr>
+        <td style="font-weight:600">v${v.version} ${v.is_published ? badge("live") : ""}</td>
+        <td class="muted">${esc(fmtDate(v.created_at))}</td>
+        <td class="muted">${esc(v.note || "—")}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button type="button" class="btn sm" data-view="${v.version}">View</button>
+          ${v.is_published ? "" : `<button type="button" class="btn sm" data-rollback="${v.version}">Roll back to this</button>`}
+        </td></tr>`).join("")}</tbody></table></div>
+      <pre id="hv-body" style="white-space:pre-wrap;margin-top:12px"></pre>`,
+    { submitLabel: "Close", onSubmit: async () => {}, width: "720px" });
+  const root = $("#modal-root");
+  root.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {
+    const v = versions.find(x => x.version === +b.dataset.view);
+    $("#hv-body", root).textContent = (v.subject ? `Subject: ${v.subject}\n\n` : "") + v.body;
+  }));
+  root.querySelectorAll("[data-rollback]").forEach(b => b.addEventListener("click", async () => {
+    const n = +b.dataset.rollback;
+    if (!confirm(`Publish a copy of version ${n} as the new live version? Your current draft will be replaced by it.`)) return;
+    try {
+      await api(`/templates/${t.id}/rollback`, { method: "POST", body: JSON.stringify({ version: n }) });
+      toast(`Rolled back to v${n}`, "ok"); root.innerHTML = ""; reload();
+    } catch (err) { toast(err.message, "err"); }
+  }));
 }
 
 function renderTemplates(el) {
@@ -1142,15 +1229,19 @@ function renderTemplates(el) {
         return;
       }
       list.innerHTML = `<table>
-        <thead><tr><th>Name</th><th>Channel</th><th>Format</th><th>Locale</th><th>Status</th><th>Updated</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Channel</th><th>Locale</th><th>Live version</th><th>Status</th><th>Updated</th><th></th></tr></thead>
         <tbody>${items.map(t => `<tr>
           <td style="font-weight:550">${esc(t.name)}<div class="muted" style="font-weight:400">${shortId(t.id)}</div></td>
           <td>${badge(chLabel(t.channel))}</td>
-          <td class="mono">${esc(t.format)}</td>
           <td class="mono">${esc(t.locale)}</td>
+          <td>${t.published_version ? `<span class="mono">v${t.published_version}</span>` : `<span class="muted">none</span>`}
+            ${t.has_unpublished_changes ? `<div class="muted" style="font-size:11px;color:var(--warn,#fbbf24)">${t.published_version ? "draft has changes" : "draft only"}</div>` : ""}</td>
           <td>${boolBadge(t.is_active)}</td>
           <td class="muted">${esc(fmtDate(t.updated_at || t.created_at))}</td>
           <td style="text-align:right;white-space:nowrap">
+            ${t.has_unpublished_changes ? `<button class="btn sm primary" data-publish="${esc(t.id)}">Publish</button>` : ""}
+            <button class="btn sm" data-preview="${esc(t.id)}">Preview</button>
+            <button class="btn sm" data-history="${esc(t.id)}">History</button>
             <button class="btn sm" data-edit="${esc(t.id)}">Edit</button>
             <button class="btn sm danger" data-del="${esc(t.id)}">Delete</button>
           </td></tr>`).join("")}</tbody></table>`;
@@ -1164,6 +1255,18 @@ function renderTemplates(el) {
           },
         });
       }));
+      const byId = id => items.find(x => x.id === id);
+      list.querySelectorAll("[data-preview]").forEach(b => b.addEventListener("click", () => openTemplatePreview(byId(b.dataset.preview))));
+      list.querySelectorAll("[data-history]").forEach(b => b.addEventListener("click", () => openTemplateHistory(byId(b.dataset.history), load)));
+      list.querySelectorAll("[data-publish]").forEach(b => b.addEventListener("click", async () => {
+        const t = byId(b.dataset.publish);
+        const note = prompt(`Publish the draft of "${t.name}" as v${(t.published_version || 0) + 1}?\nOptional note:`, "");
+        if (note === null) return;
+        try {
+          await api(`/templates/${t.id}/publish`, { method: "POST", body: JSON.stringify({ note: note || null }) });
+          toast(`Published v${(t.published_version || 0) + 1}`, "ok"); load();
+        } catch (err) { toast(err.message, "err"); }
+      }));
       list.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
         if (!confirm("Delete this template?")) return;
         try { await api(`/templates/${b.dataset.del}`, { method: "DELETE" }); toast("Template deleted", "ok"); load(); }
@@ -1173,7 +1276,7 @@ function renderTemplates(el) {
   }
 
   $("#new-btn", el).addEventListener("click", () => {
-    openModal("New template", templateForm(), {
+    openModal("New template", templateForm({}, { creating: true }), {
       submitLabel: "Create",
       onSubmit: async fd => {
         await api("/templates", { method: "POST", body: JSON.stringify(templateFromForm(fd)) });
@@ -1201,14 +1304,16 @@ function wfStateFromDefinition(def = {}) {
   const channels = [
     ...(def.channels || []).map(c => ({ ...c, fallbackOnly: false })),
     ...(def.fallback_templates || []).map(c => ({ ...c, fallbackOnly: true })),
-  ].map(c => ({ channel: c.channel, subject: c.subject || "", body: c.body || "", format: c.format || "markdown", fallbackOnly: c.fallbackOnly }));
+  ].map(c => ({ channel: c.channel, subject: c.subject || "", body: c.body || "", format: c.format || "markdown", template: c.template || null, fallbackOnly: c.fallbackOnly }));
   const d = def.digest || null;
   const digest = d ? { window: d.window || (d.window_seconds ? `${d.window_seconds}s` : "10m"), max_items: d.max_items || 100, key: d.key || "" } : null;
   return { channels, fallbacks: { ...(def.fallbacks || {}) }, chains: JSON.parse(JSON.stringify(def.provider_chains || {})), digest };
 }
 
 function wfDefinition(st) {
-  const enc = c => ({ channel: c.channel, subject: c.subject || null, body: c.body, format: c.format });
+  const enc = c => c.template
+    ? { channel: c.channel, template: c.template }
+    : { channel: c.channel, subject: c.subject || null, body: c.body, format: c.format };
   const present = new Set(st.channels.map(c => c.channel));
   const def = {
     channels: st.channels.filter(c => !c.fallbackOnly).map(enc),
@@ -1243,7 +1348,7 @@ function workflowFromForm(fd) {
   };
 }
 
-function mountWorkflowEditor(root, saved, initialDef) {
+function mountWorkflowEditor(root, saved, initialDef, templates = []) {
   const host = root.querySelector("#wf-editor");
   const hidden = root.querySelector('input[name="definition"]');
   const byId = Object.fromEntries(saved.map(p => [p.id, p]));
@@ -1289,10 +1394,17 @@ function mountWorkflowEditor(root, saved, initialDef) {
       <div class="chain-head"><span>${badge(chLabel(c.channel))} ${c.fallbackOnly ? `<span class="muted" style="font-weight:400">fallback only</span>` : ""}</span>
         <button type="button" class="btn sm danger" data-del-ch="${i}">Remove channel</button></div>
       <label class="check" style="margin-bottom:10px"><input type="checkbox" data-fbonly="${i}" ${c.fallbackOnly ? "checked" : ""}> Only send as a fallback (not on every event)</label>
+      ${(() => {
+        const names = [...new Set(templates.filter(t => t.channel === c.channel && t.is_active && t.published_version).map(t => t.name))];
+        const missing = c.template && !names.includes(c.template) ? [c.template] : [];
+        return names.length || missing.length ? `<div class="field"><label>Message from</label>
+          <select data-src="${i}"><option value="">Written here</option>${[...names, ...missing].map(n => `<option value="${esc(n)}" ${c.template === n ? "selected" : ""}>Saved template: ${esc(n)}</option>`).join("")}</select></div>` : "";
+      })()}
+      ${c.template ? `<div class="chain-note" style="margin-bottom:10px">Sends the <b>published</b> version of <b>${esc(c.template)}</b> (in the recipient's language when a translation exists). Edit or roll it back on the Templates page.</div>` : `
       ${showSubject ? `<div class="field"><label>${c.channel === "email" ? "Subject" : "Title"}</label><input data-f="subject" data-i="${i}" value="${esc(c.subject)}" placeholder="Welcome, {{ recipient.external_ref }}!"></div>` : ""}
-      <div class="field"><label>Message</label><textarea data-f="body" data-i="${i}" rows="4" spellcheck="false">${esc(c.body)}</textarea></div>
+      <div class="field"><label>Message</label><textarea data-f="body" data-i="${i}" rows="4" spellcheck="false">${esc(c.body)}</textarea></div>`}
       <div class="row">
-        <div class="field"><label>Format</label><select data-f="format" data-i="${i}">${WF_FORMATS.map(f => `<option ${f === c.format ? "selected" : ""}>${f}</option>`).join("")}</select></div>
+        ${c.template ? "" : `<div class="field"><label>Format</label><select data-f="format" data-i="${i}">${WF_FORMATS.map(f => `<option ${f === c.format ? "selected" : ""}>${f}</option>`).join("")}</select></div>`}
         ${!c.fallbackOnly && others.length ? `<div class="field"><label>If not delivered, fall back to</label>
           <select data-fb="${i}"><option value="">Nothing</option>${others.map(o => `<option value="${o.channel}" ${st.fallbacks[c.channel] === o.channel ? "selected" : ""}>${chLabel(o.channel)}</option>`).join("")}</select></div>` : ""}
       </div>
@@ -1356,6 +1468,9 @@ function mountWorkflowEditor(root, saved, initialDef) {
       draw();
     });
     host.querySelector("#wf-json-btn").addEventListener("click", () => { jsonMode = true; draw(); });
+    host.querySelectorAll("[data-src]").forEach(el => el.addEventListener("change", () => {
+      st.channels[+el.dataset.src].template = el.value || null; draw();
+    }));
     host.querySelectorAll("[data-f]").forEach(el => el.addEventListener("input", () => { st.channels[+el.dataset.i][el.dataset.f] = el.value; sync(); }));
     host.querySelectorAll("[data-fb]").forEach(el => el.addEventListener("change", () => {
       const src = st.channels[+el.dataset.fb].channel;
@@ -1403,8 +1518,10 @@ function mountWorkflowEditor(root, saved, initialDef) {
 async function openWorkflowModal(title, w, { submitLabel, onSubmit }) {
   let saved = [];
   try { saved = await api("/providers"); } catch { /* the editor degrades to no providers */ }
+  let templates = [];
+  try { templates = await api("/templates"); } catch { /* ...and to inline messages only */ }
   openModal(title, workflowForm(w || {}), { submitLabel, onSubmit, width: "760px" });
-  mountWorkflowEditor($("#modal-root"), saved, w?.definition || { channels: [{ channel: "in_app", subject: "", body: "", format: "text" }] });
+  mountWorkflowEditor($("#modal-root"), saved, w?.definition || { channels: [{ channel: "in_app", subject: "", body: "", format: "text" }] }, templates);
 }
 
 function renderWorkflows(el) {
