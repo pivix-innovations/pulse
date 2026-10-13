@@ -4,16 +4,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from domain.enums import ChannelType, TemplateFormat
+from workflows.channel_template import ChannelTemplate
+from workflows.steps import Step, encode_steps, parse_steps
 
-
-@dataclass(frozen=True, slots=True)
-class ChannelTemplate:
-    """Per-channel template carried inline on a workflow definition."""
-
-    channel: ChannelType
-    body: str
-    subject: str | None = None
-    format: TemplateFormat = TemplateFormat.MARKDOWN
+__all__ = ["ChannelTemplate", "WorkflowDefinition", "WorkflowRegistry"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,12 +22,22 @@ class WorkflowDefinition:
     fallbacks: dict[str, str] = field(default_factory=dict)
     # Templates for channels reachable only via fallback.
     fallback_templates: tuple[ChannelTemplate, ...] = ()
+    # When present the workflow is a sequence: steps replace `channels` and
+    # `fallbacks` (each step decides what happens next).
+    steps: tuple[Step, ...] = ()
+
+    @property
+    def is_sequence(self) -> bool:
+        return bool(self.steps)
 
     def template_for(self, channel: ChannelType) -> ChannelTemplate | None:
-        for ct in (*self.channels, *self.fallback_templates):
+        for ct in (*self.channels, *self.fallback_templates, *(s.template for s in self.steps)):
             if ct.channel is channel:
                 return ct
         return None
+
+    def step(self, step_id: str) -> Step | None:
+        return next((s for s in self.steps if s.id == step_id), None)
 
     def as_dict(self) -> dict[str, Any]:
         """Serializable form persisted on the workflow DB row."""
@@ -46,11 +50,14 @@ class WorkflowDefinition:
                 "format": ct.format.value,
             }
 
-        return {
+        out: dict[str, Any] = {
             "channels": [encode(ct) for ct in self.channels],
             "fallbacks": self.fallbacks,
             "fallback_templates": [encode(ct) for ct in self.fallback_templates],
         }
+        if self.steps:
+            out["steps"] = encode_steps(self.steps)
+        return out
 
     @classmethod
     def from_dict(cls, name: str, event_type: str, raw: dict[str, Any]) -> "WorkflowDefinition":
@@ -70,6 +77,7 @@ class WorkflowDefinition:
             channels=tuple(decode(i) for i in raw.get("channels", [])),
             fallbacks=dict(raw.get("fallbacks", {})),
             fallback_templates=tuple(decode(i) for i in raw.get("fallback_templates", [])),
+            steps=parse_steps(raw["steps"]) if raw.get("steps") else (),
         )
 
 
