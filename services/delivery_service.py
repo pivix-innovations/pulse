@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -8,10 +9,10 @@ from config.retry import RetrySettings
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.enums import ChannelType, DeliveryStatus
-from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, ProviderId, TenantId
+from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId, WorkflowId
 from jobqueue.retry import compute_backoff
 from services.ports.dispatch_guard import DispatchGuard
-from services.ports.providers import NotificationProvider, OutboundMessage
+from services.ports.providers import OutboundMessage, ProviderSendError, SendResult
 from services.ports.publisher import JobPublisher
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.settlement import settle_notification
@@ -19,22 +20,43 @@ from services.settlement import settle_notification
 logger = logging.getLogger(__name__)
 
 
+class ResolvedProviderLike(Protocol):
+    provider: object
+    provider_id: object
+    label: str
+
+
 class ProviderResolver(Protocol):
     """
-    Picks the driver for a tenant+channel (see providers.registry): a stored
-    per-tenant provider row if one is active, else the env-configured default.
-    Returns the provider row id too (None for the default) for attribution.
+    Picks the ordered provider chain for a delivery (see providers.registry):
+    the workflow's chain of saved providers, else the tenant's default, else
+    the env default. Never empty.
     """
 
-    async def resolve(
-        self, uow: UnitOfWork, tenant_id: TenantId, channel: ChannelType
-    ) -> tuple[NotificationProvider, ProviderId | None]: ...
+    async def resolve_chain(
+        self,
+        uow: UnitOfWork,
+        tenant_id: TenantId,
+        channel: ChannelType,
+        workflow_id: WorkflowId | None = None,
+    ) -> list[ResolvedProviderLike]: ...
+
+
+class ChainFailed(Exception):
+    """Every provider in the chain failed (or one stopped the chain)."""
+
+    def __init__(self, message: str, *, retryable: bool, invalid: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.invalid_destinations = invalid
 
 
 class DeliveryService:
     """
     Executes one delivery attempt: idempotency guard, provider dispatch,
-    then the pending -> sent transition. On failure: exponential backoff
+    then the pending -> sent transition. A channel's providers are tried in
+    the workflow's priority order, moving on only after a hard error or a
+    timeout (never after an accepted-but-unconfirmed send). On failure: exponential backoff
     up to retry.max_attempts, then dead + dead-letter row. At-least-once
     safe. Non-retryable failures stay `failed` for the reconciliation
     sweep to escalate.
@@ -77,8 +99,12 @@ class DeliveryService:
             if not await self._guard.acquire(attempt.idempotency_key):
                 return "duplicate"
 
-            provider, provider_id = await self._providers.resolve(
-                uow, tenant_id, attempt.channel
+            notification = await uow.notifications.get(tenant_id, attempt.notification_id)
+            chain = await self._providers.resolve_chain(
+                uow,
+                tenant_id,
+                attempt.channel,
+                notification.workflow_id if notification else None,
             )
             # Claim: committed before the provider call so a crash mid-send
             # leaves a marker the reconciliation sweep can find.
@@ -86,14 +112,19 @@ class DeliveryService:
             await uow.delivery_attempts.update(attempt)
             await uow.commit()
             try:
-                result = await provider.send(message)
-            except Exception as exc:
+                used, result = await self._send_through_chain(chain, message)
+            except ChainFailed as exc:
                 await self._guard.release(attempt.idempotency_key)
+                if exc.invalid_destinations:
+                    await self._prune_destinations(uow, attempt, exc.invalid_destinations)
                 await self._handle_failure(
-                    uow, attempt, error=str(exc), retryable=getattr(exc, "retryable", True)
+                    uow, attempt, error=str(exc), retryable=exc.retryable
                 )
                 await uow.commit()
                 return attempt.status.value
+            if result.invalid_destinations:
+                await self._prune_destinations(uow, attempt, result.invalid_destinations)
+            provider, provider_id = used.provider, used.provider_id
 
             attempt.mark_sent(
                 datetime.now(timezone.utc),
@@ -114,6 +145,47 @@ class DeliveryService:
                 result.provider_message_id,
             )
             return "sent"
+
+    async def _send_through_chain(
+        self, chain: list[ResolvedProviderLike], message: OutboundMessage
+    ) -> tuple[ResolvedProviderLike, SendResult]:
+        failures: list[str] = []
+        retryable = False
+        invalid: list[str] = []
+        for position, resolved in enumerate(chain):
+            try:
+                result = await asyncio.wait_for(
+                    resolved.provider.send(message), self._retry.provider_timeout_seconds
+                )
+                return resolved, result
+            except (asyncio.TimeoutError, TimeoutError):
+                error = f"timed out after {self._retry.provider_timeout_seconds:g}s"
+                exc_retryable, failover = True, True
+            except Exception as exc:
+                error = str(exc)
+                exc_retryable = getattr(exc, "retryable", True)
+                failover = exc.failover if isinstance(exc, ProviderSendError) else True
+                invalid.extend(getattr(exc, "invalid_destinations", ()))
+            failures.append(f"{resolved.label}: {error}")
+            retryable = retryable or exc_retryable
+            if not failover:
+                break
+            if position + 1 < len(chain):
+                logger.warning(
+                    "Provider '%s' failed (%s); failing over to '%s'",
+                    resolved.label,
+                    error,
+                    chain[position + 1].label,
+                )
+        raise ChainFailed("; ".join(failures), retryable=retryable, invalid=tuple(invalid))
+
+    async def _prune_destinations(
+        self, uow: UnitOfWork, attempt: DeliveryAttempt, destinations: tuple[str, ...]
+    ) -> None:
+        """Drop destinations a provider reported permanently dead (stale push tokens)."""
+        if attempt.channel is ChannelType.PUSH:
+            removed = await uow.device_tokens.delete_tokens(attempt.tenant_id, list(destinations))
+            logger.info("Pruned %d dead device token(s) for attempt %s", removed, attempt.id)
 
     async def _handle_failure(
         self, uow: UnitOfWork, attempt: DeliveryAttempt, *, error: str, retryable: bool

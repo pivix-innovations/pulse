@@ -20,7 +20,13 @@ from services.ports.clients import ResolvedRecipient
 from services.ports.providers import ProviderSendError
 from services.reconciliation_service import ReconciliationService
 from services.rendering_service import RenderingService
-from tests.fakes import FakeDispatchGuard, FakePublisher, FakeProvider, InMemoryUnitOfWork
+from tests.fakes import (
+    FakeDispatchGuard,
+    FakePublisher,
+    FakeProvider,
+    FakeResolved,
+    InMemoryUnitOfWork,
+)
 from workflows.registry import WorkflowRegistry
 
 
@@ -30,8 +36,8 @@ class ChannelProviderMap:
     def __init__(self, providers: dict[ChannelType, FakeProvider]) -> None:
         self.providers = providers
 
-    async def resolve(self, uow, tenant_id, channel: ChannelType):
-        return self.providers[channel], None
+    async def resolve_chain(self, uow, tenant_id, channel: ChannelType, workflow_id=None):
+        return [FakeResolved(self.providers[channel])]
 
 
 class InlineWorkerPublisher:
