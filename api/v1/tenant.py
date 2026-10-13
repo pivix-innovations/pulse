@@ -3,17 +3,18 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_identity_service, get_uow, require_tenant, require_tenant_admin
+from api.dependencies import get_identity_service, get_uow, require_tenant_admin, require_scope
 from domain.entities.identity import Membership, User
 from domain.enums.identity import TenantRole
 from domain.value_objects.ids import ApiKeyId, MembershipId, TenantId, UserId
 from repositories.uow import SqlAlchemyUnitOfWork
-from services.identity_service import IdentityService, hash_password
+from domain.value_objects.scopes import Scope
+from services.identity_service import ApiKeyError, IdentityService, hash_password
 
 router = APIRouter(prefix="/tenant", tags=["tenant"])
 
@@ -32,7 +33,7 @@ class UsageOut(BaseModel):
 
 
 @router.get("/usage", response_model=UsageOut)
-async def usage(request: Request, tenant_id: TenantId = Depends(require_tenant)) -> UsageOut:
+async def usage(request: Request, tenant_id: TenantId = Depends(require_scope("read"))) -> UsageOut:
     """Event ingress limits in force for this tenant and today's usage (UTC day)."""
     service = getattr(request.app.state, "rate_limit_service", None)
     if service is None or not service.enabled:
@@ -135,15 +136,48 @@ async def remove_member(
 
 class ApiKeyIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    # Least privilege by default: a key that can only send events.
+    scopes: list[Scope] = Field(default_factory=lambda: [Scope.INGEST], min_length=1)
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
 class ApiKeyOut(BaseModel):
     id: uuid.UUID
     name: str
     prefix: str
+    scopes: list[str]
+    status: str                       # active | expired | revoked
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    rotated_from: uuid.UUID | None    # the key this one replaced
+    replaced_by: uuid.UUID | None     # the key that replaced this one (it is winding down)
     is_active: bool
     created_at: datetime | None
-    key: str | None = None  # plaintext, present only in the create response
+    key: str | None = None            # plaintext, present only in the create / rotate response
+
+
+class RotateIn(BaseModel):
+    # How long the old key keeps working so clients can switch without downtime; 0 = revoke now.
+    grace_hours: int = Field(default=24, ge=0, le=24 * 30)
+
+
+class RotateOut(ApiKeyOut):
+    previous_key_valid_until: datetime
+
+
+def _status(key, now) -> str:
+    if not key.is_active:
+        return "revoked"
+    return "expired" if key.expires_at is not None and key.expires_at <= now else "active"
+
+
+def _key_out(key, now, *, replaced_by=None, plaintext: str | None = None) -> dict:
+    return dict(
+        id=key.id.value, name=key.name, prefix=key.prefix, scopes=list(key.scopes),
+        status=_status(key, now), expires_at=key.expires_at, last_used_at=key.last_used_at,
+        rotated_from=key.rotated_from_id.value if key.rotated_from_id else None,
+        replaced_by=replaced_by, is_active=key.is_active, created_at=key.created_at, key=plaintext,
+    )
 
 
 @router.get("/api-keys", response_model=list[ApiKeyOut])
@@ -151,14 +185,11 @@ async def list_api_keys(
     tenant_id: TenantId = Depends(require_tenant_admin),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[ApiKeyOut]:
+    now = datetime.now(timezone.utc)
     async with uow:
-        return [
-            ApiKeyOut(
-                id=k.id.value, name=k.name, prefix=k.prefix,
-                is_active=k.is_active, created_at=k.created_at,
-            )
-            for k in await uow.api_keys.list_for_tenant(tenant_id)
-        ]
+        keys = await uow.api_keys.list_for_tenant(tenant_id)
+    successor = {k.rotated_from_id.value: k.id.value for k in keys if k.rotated_from_id}
+    return [ApiKeyOut(**_key_out(k, now, replaced_by=successor.get(k.id.value))) for k in keys]
 
 
 @router.post("/api-keys", response_model=ApiKeyOut, status_code=201)
@@ -167,11 +198,37 @@ async def create_api_key(
     tenant_id: TenantId = Depends(require_tenant_admin),
     identity: IdentityService = Depends(get_identity_service),
 ) -> ApiKeyOut:
-    token, key = await identity.create_api_key(tenant_id, body.name)
-    return ApiKeyOut(
-        id=key.id.value, name=key.name, prefix=key.prefix,
-        is_active=True, created_at=key.created_at, key=token,
-    )
+    now = datetime.now(timezone.utc)
+    try:
+        token, key = await identity.create_api_key(
+            tenant_id, body.name, scopes=[s.value for s in body.scopes],
+            expires_at=now + timedelta(days=body.expires_in_days) if body.expires_in_days else None,
+        )
+    except ApiKeyError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return ApiKeyOut(**_key_out(key, now, plaintext=token))
+
+
+@router.post("/api-keys/{key_id}/rotate", response_model=RotateOut, status_code=201)
+async def rotate_api_key(
+    key_id: uuid.UUID,
+    body: RotateIn | None = None,
+    tenant_id: TenantId = Depends(require_tenant_admin),
+    identity: IdentityService = Depends(get_identity_service),
+) -> RotateOut:
+    """
+    Issue a replacement key with the same scopes and keep the old one alive for
+    the grace period, so deployed clients can be updated without an outage.
+    """
+    now = datetime.now(timezone.utc)
+    grace = timedelta(hours=(body or RotateIn()).grace_hours)
+    try:
+        token, new, old_valid_until = await identity.rotate_api_key(tenant_id, ApiKeyId(key_id), grace=grace)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="API key not found")
+    except ApiKeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RotateOut(**_key_out(new, now, plaintext=token), previous_key_valid_until=old_valid_until)
 
 
 @router.delete("/api-keys/{key_id}", status_code=204)
