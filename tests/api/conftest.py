@@ -40,6 +40,7 @@ class World:
     tenant_id: TenantId
     api_key: str
     redis: FakeRedis
+    app: object = None
 
     @property
     def key_headers(self) -> dict[str, str]:
@@ -81,4 +82,4 @@ async def world(monkeypatch):
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield World(uow, client, tenant.id, api_key, app.state.redis)
+        yield World(uow, client, tenant.id, api_key, app.state.redis, app)

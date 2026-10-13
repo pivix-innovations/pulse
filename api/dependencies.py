@@ -4,6 +4,7 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request
 
 from domain.value_objects.ids import InvalidIdError, TenantId
 from repositories.uow import SqlAlchemyUnitOfWork
+from services.secrets import SecretBox
 from services.identity_service import (
     AuthenticatedUser,
     AuthenticationError,
@@ -111,3 +112,11 @@ async def require_tenant_admin(
 
 
 TenantDep = Depends(require_tenant)
+
+
+def get_secret_box(request: Request) -> SecretBox:
+    box = getattr(request.app.state, "secret_box", None)
+    if box is None:
+        box = SecretBox(request.app.state.settings.security.secrets_key)
+        request.app.state.secret_box = box
+    return box

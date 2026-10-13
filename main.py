@@ -16,6 +16,7 @@ from api.v1.events import router as events_router
 from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
 from api.v1.preferences import router as preferences_router
+from api.v1.providers import catalog_router as provider_catalog_router
 from api.v1.providers import router as providers_router
 from api.v1.sse import router as sse_router
 from api.v1.templates import router as templates_router
@@ -102,6 +103,7 @@ def create_app() -> FastAPI:
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(preferences_router, prefix="/api/v1")
+    app.include_router(provider_catalog_router, prefix="/api/v1")
     app.include_router(providers_router, prefix="/api/v1")
     app.include_router(metrics_router, prefix="/api/v1")
 
