@@ -49,7 +49,9 @@
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | E1 | Persistent in-app inbox ✅ | High | L | `in_app_messages` table (`is_read`, `read_at`, `is_archived`); `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`. SSE is live-only today. |
-| E2 | Multi-step workflows | High | L | Ordered steps with delays and conditions (e.g. in-app → wait 10m → if unread, email). Builds on E1. |
+| E2 | Multi-step workflows ✅ | High | L | Ordered steps with delays and conditions (e.g. in-app → wait 10m → if unread, email). Builds on E1. |
+| E2b | Visual sequence builder in the console | Low | M | Steps, delays and conditions are edited as JSON today; add a form with a timeline preview. |
+| E2c | Cancel a running sequence | Low | S | Stop remaining steps for a notification (API + console button). |
 | E3 | Digest / batching | Medium | L | `digest` step with time windows or thresholds; buffer table plus a consolidated render. |
 | E4 | Template versioning & preview | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
 | E5 | Subscriber preference center | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. |

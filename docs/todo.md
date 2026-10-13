@@ -2,10 +2,10 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 407 passing, 102 skipped by default (`pytest`; the skips need infrastructure: e2e and Redis tests with `PULSE_E2E=1`, Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 509 passed)  
+> **Test Suite**: 503 passing, 110 skipped by default (`pytest`; the skips need infrastructure: e2e and Redis tests with `PULSE_E2E=1`, Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 612 passed)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
-> **Schema Migrations**: Linear head `a7f0c2d4e957` (12 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
+> **Schema Migrations**: Linear head `c9d2e4f6a179` (14 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
 
 ---
 
@@ -78,7 +78,7 @@
 | **D1** | OpenTelemetry Distributed Tracing | Medium | L | **[ ] OPEN** | Propagate `traceparent` through Outbox entries and Arq jobs: HTTP $\rightarrow$ Relay $\rightarrow$ Worker $\rightarrow$ Webhook. |
 | **D2** | Metrics & Alerts (OpenTelemetry → OpenObserve) | High | M | **[x] DONE** | OTLP metric export from the API, workers and scheduler; gauges for outbox lag, queue depth, stuck attempts, dead letters; counters/histograms for ingest, deliveries, provider calls and API latency. See `docs/observability.md`. |
 | **E1** | Persistent In-App Inbox Center | High | L | **[x] DONE** | `inbox_messages` table written when an in-app attempt is dispatched (idempotent per attempt); `GET /inbox` (state filter, cursor paging, unread count), `/inbox/unread-count`, `POST /inbox/{id}/read\|unread\|archive\|unarchive`, `POST /inbox/read-all`; `client` scope. Reading confirms delivery. An offline recipient is no longer a failure. See `docs/inbox.md`. |
-| **E2** | Multi-Step DAG Workflows | High | L | **[ ] OPEN** | Ordered steps with conditional delays (e.g. In-App $\rightarrow$ wait 10m $\rightarrow$ if unread, send Email). |
+| **E2** | Multi-Step Workflows | High | L | **[x] DONE** | Ordered steps with delays and conditions (previous/earlier step unread, delivered, failed, skipped; payload checks), per recipient, run by the scheduler. A linear sequence with conditions rather than a general DAG: no parallel branches or loops. Persisted as `workflow_step_runs`; see `docs/sequences.md`. |
 | **E3** | Event Digest & Batching Engine | Medium | L | **[ ] OPEN** | Time-windowed aggregation buffer (e.g. batch 20 notifications into 1 summary email). |
 | **E4** | Template Versioning & Preview | Medium | M | **[ ] OPEN** | Template draft/publish workflows with `POST /templates/{id}/preview` test render. |
 | **E5** | Preference Center & Unsubscribe | Medium | M | **[ ] OPEN** | Self-service subscriber portal for category-based opt-outs. |
@@ -109,7 +109,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **407 passing tests** (509 with infrastructure) in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **503 passing tests** (509 with infrastructure) in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
@@ -127,7 +127,7 @@ Across 50+ commits over two days, the project advanced from a draft architecture
 | **Provider Drivers** | Amazon SES, Resend, SendGrid, Twilio, FCM, SMTP, Console. | SES, SendGrid, Resend, Postmark, Twilio, Sinch, APNs, Expo, Slack. | APNs `.p8` driver, Sinch SMS, Postmark email. |
 | **Provider Routing** | Per-tenant saved providers, encrypted secrets, ordered workflow chains with in-flight failover and per-provider health. | Provider routing rules, failover chains, weighted round-robin. | Add weighted round-robin routing. |
 | **Delivery Receipts** | Per-provider signed webhooks for Twilio, Resend, SendGrid, and SES via SNS, with attempt matching. | Turnkey webhook ingestion for all major providers. | Postmark/Sinch receipt parsers when those drivers land. |
-| **Workflows** | 1-step fan-out with provider chain failover and quiet hours. | Multi-step DAG workflows: delays, conditional branching, digests, throttling. | **E2**: Add multi-step DAG engine with delay steps. |
+| **Workflows** | 1-step fan-out with provider chain failover and quiet hours. | Digests, throttling. | **E3**: Digest/batching step. |
 | **Digests & Batching** | None. Every event triggers immediate sends. | Turnkey digest engine (batch 20 actions into 1 daily/weekly email). | **E3**: Build outbox aggregation & digest window worker. |
 | **In-App Experience** | Persistent inbox with read/unread/archive, unread badge and cursor paging, plus the live SSE stream with replay. | React/Vue SDKs. | **F5**: Headless inbox widget on top of the inbox API. |
 | **Quiet Hours** | Local recipient timezone calculation, outbox deferral, Arq delayed dispatch. | Recipient & tenant quiet hours with delivery window holding. | **Completed**. |
