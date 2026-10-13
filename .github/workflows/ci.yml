@@ -79,7 +79,7 @@ jobs:
         env:
           PULSE_PG_TESTS: "1"
       - name: Smoke and chaos tests
-        run: uv run pytest tests/e2e -v
+        run: uv run pytest tests/e2e tests/integration -v   # integration: Redis limiter here, LocalStack test skips
         env:
           PULSE_E2E: "1"
           PULSE_E2E_LOGS: ${{ runner.temp }}/e2e-logs
