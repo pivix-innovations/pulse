@@ -4,7 +4,7 @@ import math
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from api.dependencies import get_notification_service, get_uow, require_tenant
+from api.dependencies import get_notification_service, get_uow, require_scope
 from api.v1.schemas import EventAccepted, EventIn, EventOut
 from domain.value_objects.ids import TenantId
 from services.ports.clients import SentinelUnavailable
@@ -24,7 +24,7 @@ async def ingest_event(
     body: EventIn,
     request: Request,
     response: Response,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("ingest")),
     service: NotificationService = Depends(get_notification_service),
 ) -> EventAccepted:
     limiter = getattr(request.app.state, "rate_limit_service", None)
@@ -76,7 +76,7 @@ async def list_events(
     response: Response,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[EventOut]:
     async with uow:

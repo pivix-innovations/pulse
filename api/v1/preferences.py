@@ -6,7 +6,7 @@ from datetime import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from domain.entities.preference import Preference
 from domain.entities.recipient import Recipient
 from domain.enums import ChannelType
@@ -57,7 +57,7 @@ def _out(p: Preference) -> PreferenceOut:
 @router.put("", response_model=PreferenceOut)
 async def upsert_preference(
     body: PreferenceIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("client")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> PreferenceOut:
     async with uow:
@@ -95,7 +95,7 @@ async def upsert_preference(
 @router.get("", response_model=list[PreferenceOut])
 async def list_preferences(
     recipient: str = Query(min_length=1, max_length=255),
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read", "client")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[PreferenceOut]:
     async with uow:
@@ -108,7 +108,7 @@ async def list_preferences(
 @router.delete("/{preference_id}", status_code=204)
 async def delete_preference(
     preference_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("client")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> None:
     async with uow:

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from api.v1.schemas import DeliveryAttemptOut, NotificationOut, NotificationSummaryOut
 from domain.enums import DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import DeliveryAttemptId, NotificationId, TenantId
@@ -29,7 +29,7 @@ class AckOut(BaseModel):
 async def ack_notification(
     notification_id: uuid.UUID,
     body: AckIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("client")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> AckOut:
     """
@@ -60,7 +60,7 @@ async def list_notifications(
     status: NotificationStatus | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[NotificationSummaryOut]:
     async with uow:
@@ -84,7 +84,7 @@ async def list_notifications(
 @router.get("/{notification_id}", response_model=NotificationOut)
 async def get_notification(
     notification_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> NotificationOut:
     async with uow:

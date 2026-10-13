@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from domain.entities.device import DeviceToken
 from domain.entities.recipient import Recipient
 from domain.enums import DevicePlatform
@@ -29,7 +29,7 @@ class DeviceRegistrationOut(BaseModel):
 @router.post("", response_model=DeviceRegistrationOut, status_code=201)
 async def register_device(
     body: DeviceRegistrationIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("client")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> DeviceRegistrationOut:
     async with uow:

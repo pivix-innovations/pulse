@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from domain.entities.template import Template
 from domain.enums import ChannelType, TemplateFormat
 from domain.value_objects.ids import TemplateId, TenantId
@@ -49,7 +49,7 @@ def _out(t: Template) -> TemplateOut:
 @router.post("", response_model=TemplateOut, status_code=201)
 async def create_template(
     body: TemplateIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> TemplateOut:
     template = Template(id=TemplateId.new(), tenant_id=tenant_id, **body.model_dump())
@@ -61,7 +61,7 @@ async def create_template(
 
 @router.get("", response_model=list[TemplateOut])
 async def list_templates(
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[TemplateOut]:
     async with uow:
@@ -71,7 +71,7 @@ async def list_templates(
 @router.get("/{template_id}", response_model=TemplateOut)
 async def get_template(
     template_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> TemplateOut:
     async with uow:
@@ -85,7 +85,7 @@ async def get_template(
 async def update_template(
     template_id: uuid.UUID,
     body: TemplateIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> TemplateOut:
     async with uow:
@@ -101,7 +101,7 @@ async def update_template(
 @router.delete("/{template_id}", status_code=204)
 async def delete_template(
     template_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> None:
     async with uow:

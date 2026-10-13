@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType
 from domain.value_objects.ids import InvalidIdError, ProviderId, TenantId, WorkflowId
@@ -103,7 +103,7 @@ async def _validate_provider_chains(
 @router.post("", response_model=WorkflowOut, status_code=201)
 async def create_workflow(
     body: WorkflowIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     _validate_definition(body)
@@ -117,7 +117,7 @@ async def create_workflow(
 
 @router.get("", response_model=list[WorkflowOut])
 async def list_workflows(
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[WorkflowOut]:
     async with uow:
@@ -127,7 +127,7 @@ async def list_workflows(
 @router.get("/{workflow_id}", response_model=WorkflowOut)
 async def get_workflow(
     workflow_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     async with uow:
@@ -141,7 +141,7 @@ async def get_workflow(
 async def update_workflow(
     workflow_id: uuid.UUID,
     body: WorkflowIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     _validate_definition(body)
@@ -159,7 +159,7 @@ async def update_workflow(
 @router.delete("/{workflow_id}", status_code=204)
 async def delete_workflow(
     workflow_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> None:
     async with uow:

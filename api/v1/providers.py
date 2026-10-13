@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_secret_box, get_uow, require_tenant
+from api.dependencies import get_secret_box, get_uow, require_scope
 from domain.entities.provider import Provider
 from domain.enums import ChannelType
 from domain.value_objects.ids import ProviderId, TenantId
@@ -27,7 +27,7 @@ catalog_router = APIRouter(prefix="/provider-catalog", tags=["providers"])
 
 @catalog_router.get("")
 async def list_catalog(
-    channel: ChannelType | None = None, _: TenantId = Depends(require_tenant)
+    channel: ChannelType | None = None, _: TenantId = Depends(require_scope("read"))
 ) -> list[dict[str, Any]]:
     """Providers a client can choose from: name, logo and the fields to fill in."""
     return [s.public() for s in list_specs() if channel is None or s.channel is channel]
@@ -62,7 +62,7 @@ async def test_connection(
     channel: ChannelType,
     key: str,
     body: TestIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
 ) -> TestOut:
@@ -199,7 +199,7 @@ def _encrypt_or_503(box: SecretBox, secrets: dict[str, Any]) -> str | None:
 @router.post("", response_model=ProviderOut, status_code=201)
 async def create_provider(
     body: ProviderIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
     public_url: str | None = Depends(get_public_url),
@@ -231,7 +231,7 @@ async def create_provider(
 @router.get("", response_model=list[ProviderOut])
 async def list_providers(
     channel: ChannelType | None = None,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
     public_url: str | None = Depends(get_public_url),
@@ -266,7 +266,7 @@ class ProviderHealthOut(BaseModel):
 async def providers_health(
     request: Request,
     window_hours: int = Query(default=24, ge=1, le=24 * 30),
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[ProviderHealthOut]:
     """
@@ -300,7 +300,7 @@ async def providers_health(
 @router.get("/{provider_id}", response_model=ProviderOut)
 async def get_provider(
     provider_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
     public_url: str | None = Depends(get_public_url),
@@ -317,7 +317,7 @@ async def get_provider(
 async def update_provider(
     provider_id: uuid.UUID,
     body: ProviderIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
     public_url: str | None = Depends(get_public_url),
@@ -369,7 +369,7 @@ async def update_provider(
 @router.delete("/{provider_id}", status_code=204)
 async def delete_provider(
     provider_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> None:
     async with uow:

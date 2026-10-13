@@ -4,7 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from api.v1.schemas import DeadLetterOut
 from domain.entities.outbox import OutboxEntry
 from domain.enums import DeliveryStatus, NotificationStatus
@@ -20,7 +20,7 @@ async def list_dead_letters(
     response: Response,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[DeadLetterOut]:
     async with uow:
@@ -43,7 +43,7 @@ async def list_dead_letters(
 async def retry_dead_letter(
     dead_letter_id: uuid.UUID,
     request: Request,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> dict[str, str]:
     """Redrive: reset the dead attempt to pending and re-publish it via the outbox."""
