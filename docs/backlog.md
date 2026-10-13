@@ -7,9 +7,9 @@
 
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| A1 | Full-stack smoke test via `docker-compose` | Critical | S | Ingest → outbox → worker → deliver → settle; also retry, fallback escalation and dead-letter paths. Last commit changed settlement, claim semantics, dispatch guard and quiet hours together. |
-| A2 | Crash/chaos tests for worker claim & requeue | Critical | M | Kill a worker mid-`dispatching`; assert `_requeue_stuck()` recovers and the dispatch guard's 180s lease expires. |
-| A3 | CI pipeline (GitHub Actions) | High | S | `ruff check`, `pytest`, `alembic upgrade head` on Postgres + Redis services. No `.github/` yet. |
+| A1 | Full-stack smoke test via `docker-compose` ✅ | Critical | S | Ingest → outbox → worker → deliver → settle; also retry, fallback escalation and dead-letter paths. Last commit changed settlement, claim semantics, dispatch guard and quiet hours together. |
+| A2 | Crash/chaos tests for worker claim & requeue ✅ | Critical | M | Kill a worker mid-`dispatching`; assert `_requeue_stuck()` recovers and the dispatch guard's 180s lease expires. |
+| A3 | CI pipeline (GitHub Actions) ✅ | High | S | `ruff check`, `pytest`, `alembic upgrade head` on Postgres + Redis services. No `.github/` yet. |
 | A4 | Postgres-backed repository tests | High | M | Current tests run on in-memory fakes; add tests against real SQL for outbox, delivery and settlement queries. |
 | A5 | Repo hygiene | Low | S | Add `.DS_Store` to `.gitignore`; remove tracked `__pycache__`; refresh `todo.md` header. |
 

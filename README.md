@@ -169,6 +169,17 @@ pulse/
 └── tests/
 ```
 
+## Testing
+
+```bash
+make test        # unit + API tests, in-memory fakes, no services needed
+make e2e         # smoke + chaos tests: real API, workers and scheduler on real Postgres + Redis
+```
+
+`make e2e` starts the compose Postgres and Redis, then runs `tests/e2e`: the full event → outbox → worker → delivery → settlement path, provider failover with the circuit breaker, a worker `SIGKILL`ed mid-send, and a lost queue job. Each run uses a throwaway database and Redis DB index. If port 6380 is taken by another project, use `PULSE_REDIS_PORT=6390 make e2e` with `PULSE_REDIS__PORT=6390` exported.
+
+`tests/integration` checks SES events against real SNS signatures with LocalStack (`LOCALSTACK_URL=http://localhost:4566`). CI (`.github/workflows/ci.yml`) runs lint, unit tests and the e2e suite.
+
 ## Getting started
 
 Requires Python >= 3.10, [uv](https://docs.astral.sh/uv/), and Docker.

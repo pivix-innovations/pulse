@@ -2,7 +2,7 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 222 passing, 1 skipped (`pytest`; the skipped test needs LocalStack, see `tests/integration/`)  
+> **Test Suite**: 222 passing, 6 skipped (`pytest`; the skips are the 5 e2e tests, run with `PULSE_E2E=1`, and 1 LocalStack test, run with `LOCALSTACK_URL`)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
 > **Schema Migrations**: Linear head `e4c7f9a1b624` (10 revisions; SQL generated offline, not yet applied to a live database)
@@ -51,6 +51,9 @@
 | **G12** | Structured Workflow Editor | **Medium** | **[x] COMPLETED** | Form for channels, templates, fallbacks and drag-to-reorder provider chains; "Edit as JSON" retained. |
 | **G13** | Provider Health | **Medium** | **[x] COMPLETED** | `provider_calls` log (outcome + latency; recipient errors excluded; pruned after 30 days), `GET /api/v1/providers/health`, status pills in the console. Migration `e4c7f9a1b624`. |
 | **G14** | Provider Circuit Breaker | **High** | **[x] COMPLETED** | `RedisCircuitBreaker` (`jobqueue/circuit_breaker.py`): 5 consecutive provider failures open the circuit for 60s, then a single probe message tests recovery; shared across workers; recipient errors never count; if every circuit is open the chain is tried anyway; breaker faults never fail a delivery. State shown in provider health. Settings: `PULSE_BREAKER__*`. |
+| **A1** | Full-Stack Smoke Test | **Critical** | **[x] COMPLETED** | `tests/e2e/test_smoke.py` runs the real API, arq workers and scheduler as processes on real Postgres + Redis (throwaway DB per run, real migrations): event → outbox → worker → delivery → settlement, idempotent re-send, and failover + circuit breaker (5 failures open the circuit, the 6th message skips the dead provider). Run with `make e2e`. First run of all 10 migrations on a live database passed; `alembic check` reports no model drift. |
+| **A2** | Worker Claim Crash/Chaos Tests | **Critical** | **[x] COMPLETED** | `tests/e2e/test_chaos.py`: (1) SIGKILL a worker mid-send against a hung relay: the attempt stays pending with its claim, then after lease + in-doubt TTL the sweep requeues it and a restarted worker delivers it once via the operator's re-route; (2) a queued job deleted from Redis is requeued and delivered once. `dispatch_lease_seconds` is now a setting (`PULSE_RETRY__DISPATCH_LEASE_SECONDS`). |
+| **A3** | CI Pipeline | **High** | **[x] COMPLETED** | `.github/workflows/ci.yml`: ruff + unit tests; e2e job on Postgres/Redis service containers with `alembic upgrade head`, `alembic check` and the smoke/chaos suite (logs uploaded on failure); LocalStack SNS job, non-blocking until proven on GitHub runners. Verified locally with env vars only (no `.env`); the workflow itself has not run on GitHub yet. |
 | **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
 | **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
 | **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
@@ -61,14 +64,12 @@
 
 | ID | Item | Priority | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| **G15** | Workflow Without a Chain Uses Another Workflow's Provider | **High** | **[ ] OPEN** | Found by the chaos suite: a workflow with no `provider_chains` for a channel falls back to the tenant's highest-priority active saved provider, so adding a provider for workflow A silently reroutes workflow B. Decide: fall back to the env default only, or require an explicit chain. |
 | **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
 | **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
 | **H7** | SSE Replay & Redis Fan-Out Test Seams | High | S | **[~] IN PROGRESS** | Unit tests for provider publish complete; stream replay and multi-instance fan-out tests need mock generator seam. |
 | **H8** | Short-Lived Stream Tokens for SSE | Medium | M | **[ ] OPEN** | Replace API key in SSE URL query parameter with short-lived ticket/token. |
-| **A1** | Full-Stack Smoke Test (`docker-compose`) | Critical | S | **[ ] OPEN** | Ingestion $\rightarrow$ Outbox $\rightarrow$ Worker $\rightarrow$ Delivery $\rightarrow$ Settlement integration verification script. |
-| **A2** | Worker Claim Crash/Chaos Tests | Critical | M | **[ ] OPEN** | Test worker kill mid-dispatch; assert `_requeue_stuck()` recovers job when 180s lease expires. |
-| **A3** | CI Pipeline (GitHub Actions) | High | S | **[ ] OPEN** | `.github/workflows/ci.yml` running `ruff check`, `pytest`, and `alembic upgrade head`. |
 | **A4** | PostgreSQL-Backed Integration Tests | High | M | **[ ] OPEN** | Execute repository tests against real PostgreSQL instance to test `SKIP LOCKED` queries. |
 | **C1** | Per-Tenant Rate Limiting & Send Quotas | High | M | **[ ] OPEN** | Redis token bucket algorithm on `POST /events`; enforce tenant daily send caps. |
 | **C2** | Real Sentinel Service Integration | High | M | **[ ] OPEN** | Connect external auth/tenant microservice with caching, circuit breaker, and timeouts. |
@@ -166,7 +167,7 @@ Across 50+ commits over two days, the project advanced from a draft architecture
   - In `DeliveryService.deliver()`, `attempt.mark_dispatching()` is committed before invoking the provider.
   - In `ReconciliationService.sweep_once()`, `_requeue_stuck()` queries `uow.delivery_attempts.list_stuck(...)` with `SKIP LOCKED`.
   - Jobs unclaimed for 300s or in-doubt for 300s (both longer than the 180s dispatch lease) are marked `mark_requeued()` and re-emitted to the Outbox.
-- **Verification**: `tests/test_reconciliation_service.py::test_sweep_requeues_stuck_in_doubt_attempt`. Real-crash behaviour (kill a worker mid-send) is still untested: see A2.
+- **Verification**: `tests/test_reconciliation_service.py::test_sweep_requeues_stuck_in_doubt_attempt`. Real-crash behaviour (SIGKILL mid-send, lost queue job) is covered end to end by `tests/e2e/test_chaos.py` (A2).
 
 ---
 
@@ -180,7 +181,7 @@ Across 50+ commits over two days, the project advanced from a draft architecture
   - `complete()` transitions the key to a 24h finished marker (`pulse:dispatched:{key}`).
   - `release()` immediately deletes the key on retryable failure.
   - Crashed workers release their lock automatically after 180 seconds, allowing stuck sweeps to retry safely.
-- **Verification**: logic is exercised against `FakeDispatchGuard` only; the Redis implementation has no tests yet (see A2/A4).
+- **Verification**: logic is exercised against `FakeDispatchGuard` only; the Redis implementation is exercised end to end by `tests/e2e` (A1/A2) but has no direct unit tests.
 
 #### TODO-2.2 & G1–G5: Database Provider Runtime & Failover Chain
 - **Status**: `[x] COMPLETED`
@@ -278,55 +279,8 @@ Across 50+ commits over two days, the project advanced from a draft architecture
 
 ### Sprint 1: Reliability & CI
 
-#### A3: GitHub Actions CI Pipeline
-- **Priority**: High | **Effort**: S
-- **Implementation**:
-  Create `.github/workflows/ci.yml`:
-  ```yaml
-  name: CI
-  on: [push, pull_request]
-  jobs:
-    test:
-      runs-on: ubuntu-latest
-      services:
-        postgres:
-          image: postgres:16-alpine
-          env:
-            POSTGRES_DB: pulse_test
-            POSTGRES_USER: pulse
-            POSTGRES_PASSWORD: secretpassword
-          ports: ["5432:5432"]
-          options: >-
-            --health-cmd pg_isready
-            --health-interval 10s
-            --health-timeout 5s
-            --health-retries 5
-        redis:
-          image: redis:7-alpine
-          ports: ["6379:6379"]
-      steps:
-        - uses: actions/checkout@v4
-        - uses: actions/setup-python@v5
-          with: { python-version: "3.10" }
-        - run: pip install uv && uv sync
-        - run: uv run ruff check .
-        - run: uv run pytest   # in-memory fakes; needs no services
-        - run: uv run alembic upgrade head
-          env:
-            # Settings require database credentials; point them at the service above.
-            PULSE_DATABASE__DRIVER: postgresql+asyncpg
-            PULSE_DATABASE__HOST: localhost
-            PULSE_DATABASE__PORT: "5432"
-            PULSE_DATABASE__USERNAME: pulse
-            PULSE_DATABASE__PASSWORD: secretpassword
-            PULSE_DATABASE__DB: pulse_test
-  ```
+A1, A2 and A3 are done (see the tracker). Remaining reliability work: A4 (repository tests against real Postgres, e.g. `SKIP LOCKED` paths) and H7 (SSE replay / fan-out tests).
 
-#### A1 & A2: Full-Stack Smoke & Chaos Tests
-- **Priority**: Critical | **Effort**: M
-- **Implementation**:
-  1. Add end-to-end integration test in `tests/test_chaos.py` simulating worker termination mid-dispatch (`SIGKILL` during `dispatch_started_at`).
-  2. Verify that once the 180s dispatch lease has expired and the attempt has been in doubt for `stuck_in_doubt_ttl_seconds` (300s), the sweep requeues it. Use short TTLs in the test and a real Redis for the guard (the guard is only tested against a fake today).
 
 ---
 
