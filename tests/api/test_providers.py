@@ -164,3 +164,47 @@ async def test_tenant_cannot_chain_another_tenants_provider(world):
     )
     await world.uow.providers.add(other)
     assert (await make_wf(world, {"email": [str(other.id)]})).status_code == 422
+
+
+async def test_connection_test_uses_stored_secrets_when_form_leaves_them_blank(keyed, monkeypatch):
+    from providers import catalog
+
+    seen = {}
+
+    async def fake_check(config, secrets):
+        seen.update(config=config, secrets=secrets)
+        return True, "looks good"
+
+    spec = catalog.get_spec(catalog.ChannelType.EMAIL, "resend")
+    monkeypatch.setitem(
+        catalog._BY_ID, "email/resend", type(spec)(**{**{s: getattr(spec, s) for s in spec.__slots__}, "check": fake_check})
+    )
+    created = await create(keyed, {
+        "channel": "email", "name": "resend", "config": {"from_address": "a@x.io"},
+        "secrets": {"api_key": "re_stored"},
+    })
+    pid = created.json()["id"]
+    r = await keyed.client.post(
+        "/api/v1/provider-catalog/email/resend/test",
+        json={"config": {"from_address": "b@x.io"}, "secrets": {}, "provider_id": pid},
+        headers=keyed.key_headers,
+    )
+    assert r.json() == {"ok": True, "detail": "looks good"}
+    assert seen["secrets"] == {"api_key": "re_stored"} and seen["config"]["from_address"] == "b@x.io"
+
+
+async def test_connection_test_reports_validation_problems_instead_of_raising(world):
+    r = await world.client.post(
+        "/api/v1/provider-catalog/sms/twilio/test",
+        json={"config": {}, "secrets": {}},
+        headers=world.key_headers,
+    )
+    assert r.status_code == 200 and r.json()["ok"] is False
+    assert "account_sid" in r.json()["detail"]
+
+
+async def test_untestable_provider_returns_422(world):
+    r = await world.client.post(
+        "/api/v1/provider-catalog/sms/console/test", json={}, headers=world.key_headers
+    )
+    assert r.status_code == 422

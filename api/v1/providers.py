@@ -43,6 +43,50 @@ async def catalog_logo(channel: ChannelType, key: str) -> Response:
     )
 
 
+class TestIn(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    secrets: dict[str, Any | None] = Field(default_factory=dict)
+    # Edit forms leave saved secrets blank; name the saved provider to reuse them.
+    provider_id: uuid.UUID | None = None
+
+
+class TestOut(BaseModel):
+    ok: bool
+    detail: str
+
+
+@catalog_router.post("/{channel}/{key}/test", response_model=TestOut)
+async def test_connection(
+    channel: ChannelType,
+    key: str,
+    body: TestIn,
+    tenant_id: TenantId = Depends(require_tenant),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+    box: SecretBox = Depends(get_secret_box),
+) -> TestOut:
+    """Check credentials against the provider before (or after) saving them."""
+    spec = _spec_or_422(channel, key)
+    if spec.check is None:
+        raise HTTPException(status_code=422, detail=f"{spec.name} has no connection test")
+    stored: dict[str, Any] = {}
+    if body.provider_id is not None:
+        async with uow:
+            existing = await uow.providers.get(tenant_id, ProviderId(body.provider_id))
+        if existing is None or (existing.channel, existing.name) != (channel, key):
+            raise HTTPException(status_code=404, detail="Provider not found")
+        try:
+            stored = box.decrypt(existing.secrets_encrypted)
+        except (SecretsNotConfigured, SecretsDecryptionError):
+            stored = {}
+    merged = {**stored, **{k: v for k, v in body.secrets.items() if v not in (None, "")}}
+    try:
+        config, secrets = spec.validate(body.config, merged)
+    except ValueError as exc:
+        return TestOut(ok=False, detail=str(exc))
+    ok, detail = await spec.check(config, secrets)
+    return TestOut(ok=ok, detail=detail)
+
+
 # ── Saved providers ────────────────────────────────────────────────────
 
 
