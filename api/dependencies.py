@@ -3,9 +3,11 @@ from __future__ import annotations
 from fastapi import Cookie, Depends, Header, HTTPException, Request
 
 from domain.value_objects.ids import InvalidIdError, TenantId
+from domain.value_objects.scopes import ALL_SCOPES, satisfies
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.secrets import SecretBox
 from services.identity_service import (
+    ApiPrincipal,
     AuthenticatedUser,
     AuthenticationError,
     IdentityService,
@@ -29,12 +31,12 @@ def get_identity_service(request: Request) -> IdentityService:
     return request.app.state.identity_service
 
 
-async def resolve_env_or_db_api_key(request: Request, raw_key: str) -> TenantId | None:
-    """Static env-configured keys (dev bootstrap) first, then DB keys."""
+async def resolve_env_or_db_api_key(request: Request, raw_key: str) -> ApiPrincipal | None:
+    """Static env-configured keys (dev bootstrap; all scopes) first, then DB keys."""
     tenant_raw = request.app.state.settings.security.ingress_api_keys.get(raw_key)
     if tenant_raw is not None:
         try:
-            return TenantId.from_str(tenant_raw)
+            return ApiPrincipal(TenantId.from_str(tenant_raw), frozenset(ALL_SCOPES))
         except InvalidIdError:
             raise HTTPException(status_code=500, detail="Misconfigured tenant for API key")
     return await request.app.state.identity_service.resolve_api_key(raw_key)
@@ -74,10 +76,11 @@ async def require_tenant(
         user's memberships (platform admins may act on any tenant).
     """
     if x_api_key:
-        tenant_id = await resolve_env_or_db_api_key(request, x_api_key)
-        if tenant_id is None:
+        principal = await resolve_env_or_db_api_key(request, x_api_key)
+        if principal is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
-        return tenant_id
+        request.state.scopes = principal.scopes     # what this key may do; sessions leave it unset
+        return principal.tenant_id
 
     if pulse_session:
         auth = await get_current_user(request, pulse_session)
@@ -92,6 +95,30 @@ async def require_tenant(
         return tenant_id
 
     raise HTTPException(status_code=401, detail="Provide an API key or sign in")
+
+
+def require_scope(*accepted: str):
+    """
+    Dependency: the caller is a tenant member / API key *and*, if it is an API
+    key, holds one of `accepted` scopes (`admin` satisfies any). Console
+    sessions are governed by their role instead and pass.
+    """
+
+    async def dependency(
+        request: Request, tenant_id: TenantId = Depends(require_tenant)
+    ) -> TenantId:
+        scopes = getattr(request.state, "scopes", None)
+        if scopes is not None and not satisfies(scopes, accepted):
+            raise HTTPException(
+                status_code=403,
+                detail=f"This API key lacks the '{accepted[0]}' scope"
+                + (f" (or one of: {', '.join(accepted[1:])})" if len(accepted) > 1 else ""),
+            )
+        return tenant_id
+
+    dependency.__name__ = "require_scope"
+    dependency.scopes = accepted  # type: ignore[attr-defined]
+    return dependency
 
 
 async def require_tenant_admin(

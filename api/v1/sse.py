@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from api.dependencies import get_uow, resolve_env_or_db_api_key
 from domain.enums import ChannelType
+from domain.value_objects.scopes import satisfies
 from domain.entities.recipient import Recipient
 from domain.value_objects.ids import InvalidIdError, RecipientId, TenantId
 from services.identity_service import AuthenticationError, can_access_tenant
@@ -82,9 +83,12 @@ async def stream(
     key = x_api_key or api_key
     tenant_id: TenantId | None = None
     if key:
-        tenant_id = await resolve_env_or_db_api_key(request, key)
-        if tenant_id is None:
+        principal = await resolve_env_or_db_api_key(request, key)
+        if principal is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
+        if not satisfies(principal.scopes, ("client",)):
+            raise HTTPException(status_code=403, detail="This API key lacks the 'client' scope")
+        tenant_id = principal.tenant_id
     elif pulse_session and tenant:
         try:
             auth = await request.app.state.identity_service.resolve_session(pulse_session)
