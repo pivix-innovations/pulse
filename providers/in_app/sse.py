@@ -34,5 +34,7 @@ class SseInAppProvider(InAppProvider):
             },
         )
         if receivers == 0:
-            raise ProviderSendError("No live SSE connection for recipient", retryable=False)
+            raise ProviderSendError(
+                "No live SSE connection for recipient", retryable=False, failover=False
+            )
         return SendResult(provider_message_id=f"sse-receivers-{receivers}")
