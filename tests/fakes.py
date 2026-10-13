@@ -118,6 +118,18 @@ class InMemoryDeliveryAttemptRepository:
             if a.tenant_id == tenant_id and a.notification_id == notification_id
         ]
 
+    async def get_by_provider_message_id(
+        self, tenant_id, provider_id, provider_message_id, *, for_update=False
+    ):
+        for a in self.items.values():
+            if (
+                a.tenant_id == tenant_id
+                and a.provider_id == provider_id
+                and a.provider_message_id == provider_message_id
+            ):
+                return a
+        return None
+
     async def get_by_dispatch(
         self,
         notification_id: NotificationId,

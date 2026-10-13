@@ -55,7 +55,10 @@ class DeliveryAttemptModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixi
         Boolean, nullable=False, default=True, server_default=true()
     )
 
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     __table_args__ = (
+        Index("ix_delivery_attempts_provider_message_id", "tenant_id", "provider_message_id"),
         # One attempt row per (notification x recipient x channel); this is
         # also the idempotency boundary for dispatch.
         UniqueConstraint(

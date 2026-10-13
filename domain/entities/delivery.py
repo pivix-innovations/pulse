@@ -53,6 +53,9 @@ class DeliveryAttempt:
     next_retry_at: datetime | None = None
     dispatch_started_at: datetime | None = None
     expects_confirmation: bool = True
+    # The provider's own id for the accepted message; how delivery receipts
+    # (webhooks) find this attempt again.
+    provider_message_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -99,8 +102,10 @@ class DeliveryAttempt:
         provider_id: ProviderId | None = None,
         *,
         expects_confirmation: bool = True,
+        provider_message_id: str | None = None,
     ) -> None:
         self._transition(DeliveryStatus.SENT)
+        self.provider_message_id = provider_message_id
         self.attempt_count += 1
         self.sent_at = at
         self.expects_confirmation = expects_confirmation

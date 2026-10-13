@@ -70,6 +70,17 @@ class DeliveryAttemptRepository(Protocol):
 
     async def add_many(self, attempts: Sequence[DeliveryAttempt]) -> None: ...
 
+    async def get_by_provider_message_id(
+        self,
+        tenant_id: TenantId,
+        provider_id: ProviderId,
+        provider_message_id: str,
+        *,
+        for_update: bool = False,
+    ) -> DeliveryAttempt | None:
+        """Find the attempt a provider's delivery receipt refers to."""
+        ...
+
     async def get_by_dispatch(
         self,
         notification_id: NotificationId,

@@ -37,6 +37,7 @@ def _to_entity(row: DeliveryAttemptModel) -> DeliveryAttempt:
         next_retry_at=row.next_retry_at,
         dispatch_started_at=row.dispatch_started_at,
         expects_confirmation=row.expects_confirmation,
+        provider_message_id=row.provider_message_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -64,6 +65,7 @@ class PostgresDeliveryAttemptRepository:
                 body_html=a.body_html,
                 next_retry_at=a.next_retry_at,
                 expects_confirmation=a.expects_confirmation,
+                provider_message_id=a.provider_message_id,
             )
             for a in attempts
         )
@@ -97,6 +99,24 @@ class PostgresDeliveryAttemptRepository:
         if for_update:
             stmt = stmt.with_for_update()
         row = (await self._session.execute(stmt)).scalar_one_or_none()
+        return _to_entity(row) if row else None
+
+    async def get_by_provider_message_id(
+        self,
+        tenant_id: TenantId,
+        provider_id: ProviderId,
+        provider_message_id: str,
+        *,
+        for_update: bool = False,
+    ) -> DeliveryAttempt | None:
+        stmt = select(DeliveryAttemptModel).where(
+            DeliveryAttemptModel.tenant_id == tenant_id.value,
+            DeliveryAttemptModel.provider_id == provider_id.value,
+            DeliveryAttemptModel.provider_message_id == provider_message_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        row = (await self._session.execute(stmt)).scalars().first()
         return _to_entity(row) if row else None
 
     async def list_stale(
@@ -206,4 +226,5 @@ class PostgresDeliveryAttemptRepository:
         row.next_retry_at = attempt.next_retry_at
         row.dispatch_started_at = attempt.dispatch_started_at
         row.expects_confirmation = attempt.expects_confirmation
+        row.provider_message_id = attempt.provider_message_id
         await self._session.flush()

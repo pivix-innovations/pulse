@@ -130,6 +130,7 @@ class DeliveryService:
                 datetime.now(timezone.utc),
                 provider_id=provider_id,
                 expects_confirmation=getattr(provider, "confirms_delivery", True),
+                provider_message_id=result.provider_message_id,
             )
             await uow.delivery_attempts.update(attempt)
             if not attempt.expects_confirmation:
