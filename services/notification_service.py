@@ -18,7 +18,8 @@ from domain.value_objects.ids import (
 )
 from services.ports.clients import ResolvedRecipient, SentinelClient
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
-from services.attempts import build_attempt, outbox_entries
+from services.attempts import attempts_for, build_attempt, outbox_entries
+from telemetry.metrics import get_metrics
 from services.rendering_service import RenderingService
 from services.sequence_service import SequenceEngine
 from workflows.registry import WorkflowDefinition, WorkflowRegistry
@@ -180,19 +181,30 @@ class NotificationService:
             recipients.append(recipient)
             if definition.is_sequence:
                 continue
-            prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
-            opted_out = {p.channel for p in prefs if not p.opted_in}
-            quiet = {p.channel: p.quiet_hours for p in prefs if p.quiet_hours is not None}
-            now = datetime.now(timezone.utc)
-            for ct in definition.channels:
-                if ct.channel in opted_out:
-                    continue
-                attempt = self._build_attempt(notification, recipient, ct)
-                window = quiet.get(ct.channel)
-                if window is not None:
-                    # Hold until the recipient's quiet window ends.
-                    attempt.next_retry_at = window.window_end(now)
-                attempts.append(attempt)
+            if definition.digest is not None:
+                digest = definition.digest
+                await uow.digests.add_item(
+                    tenant_id=notification.tenant_id,
+                    workflow_id=notification.workflow_id,
+                    recipient_id=recipient.id,
+                    digest_key=digest.key_for(notification.payload),
+                    notification_id=notification.id,
+                    payload=notification.payload,
+                    now=datetime.now(timezone.utc),
+                    window_seconds=digest.window_seconds,
+                    max_items=digest.max_items,
+                )
+                get_metrics().digest_items.add(1, {})
+                continue
+            attempts.extend(
+                await attempts_for(
+                    uow, self._rendering, notification, recipient, definition.channels,
+                    datetime.now(timezone.utc),
+                )
+            )
+
+        if definition.digest is not None:
+            return 0   # buffered; the scheduler sends the digest when its window closes
 
         if definition.is_sequence:
             # Steps decide what is sent and when; the first one runs now (unless delayed).

@@ -46,6 +46,12 @@ class PulseMetrics:
         self.workflow_steps = meter.create_counter(
             "pulse.workflow.steps", unit="{step}", description="Multi-step workflow steps run (done/skipped)"
         )
+        self.digest_items = meter.create_counter(
+            "pulse.digest.items", unit="{event}", description="Events buffered into a digest"
+        )
+        self.digest_flushes = meter.create_counter(
+            "pulse.digest.flushes", unit="{digest}", description="Digests sent (outcome: sent/failed)"
+        )
         self.provider_calls = meter.create_counter(
             "pulse.provider.calls", unit="{call}", description="Provider send calls by outcome"
         )

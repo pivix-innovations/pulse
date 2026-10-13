@@ -5,7 +5,13 @@ from datetime import datetime
 from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import DeliveryAttemptModel, NotificationModel, WorkflowStepRunModel
+from database.models import (
+    DeliveryAttemptModel,
+    DigestBatchModel,
+    DigestItemModel,
+    NotificationModel,
+    WorkflowStepRunModel,
+)
 from domain.entities.notification import Notification
 from domain.enums import DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import EventId, NotificationId, TenantId, WorkflowId
@@ -104,6 +110,15 @@ class PostgresNotificationRepository:
                     select(WorkflowStepRunModel.id).where(
                         WorkflowStepRunModel.notification_id == NotificationModel.id,
                         WorkflowStepRunModel.status == "scheduled",
+                    )
+                ),
+                # ...nor one whose event is still buffered in an open digest.
+                ~exists(
+                    select(DigestItemModel.id)
+                    .join(DigestBatchModel, DigestBatchModel.id == DigestItemModel.batch_id)
+                    .where(
+                        DigestItemModel.notification_id == NotificationModel.id,
+                        DigestBatchModel.status == "open",
                     )
                 ),
             )

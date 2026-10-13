@@ -20,6 +20,7 @@ from repositories.uow import SqlAlchemyUnitOfWork
 from services.notification_service import NotificationService
 from services.reconciliation_service import ReconciliationService
 from services.rendering_service import RenderingService
+from services.digest_service import DigestFlusher
 from services.scheduling_service import SchedulingService
 from services.sequence_service import SequenceEngine, StepRunner
 from telemetry.metrics import (
@@ -62,9 +63,22 @@ async def main() -> None:
         sentinel=sentinel,
     )
 
+    digests = DigestFlusher(uow_factory, RenderingService(), settings.reconciliation)
     steps = StepRunner(uow_factory, SequenceEngine(RenderingService()), settings.reconciliation)
 
     stop = asyncio.Event()
+
+    async def digest_loop() -> None:
+        logger.info("Digest flusher started (interval=%.1fs)", settings.reconciliation.step_poll_seconds)
+        while not stop.is_set():
+            try:
+                await digests.flush_due_once()
+            except Exception:
+                logger.exception("Digest flush cycle failed")
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=settings.reconciliation.step_poll_seconds)
+            except asyncio.TimeoutError:
+                pass
 
     async def step_loop() -> None:
         logger.info("Workflow step runner started (interval=%.1fs)", settings.reconciliation.step_poll_seconds)
@@ -154,6 +168,7 @@ async def main() -> None:
         asyncio.create_task(sweep_loop()),
         asyncio.create_task(schedule_loop()),
         asyncio.create_task(step_loop()),
+        asyncio.create_task(digest_loop()),
         asyncio.create_task(prune_loop()),
     ]
     await stop.wait()

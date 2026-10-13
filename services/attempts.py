@@ -1,13 +1,15 @@
 """Building delivery attempts and their outbox entries (shared by ingest, steps and the sweep)."""
 from __future__ import annotations
 
-from typing import Sequence
+from datetime import datetime
+from typing import Any, Sequence
 
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
 from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId
+from services.ports.uow import UnitOfWork
 from services.rendering_service import RenderingService
 from workflows.channel_template import ChannelTemplate
 
@@ -17,18 +19,24 @@ def build_attempt(
     notification: Notification,
     recipient: Recipient,
     template: ChannelTemplate,
+    *,
+    payload: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> DeliveryAttempt:
+    """Render one channel. `payload` overrides the notification's (digests render the latest event);
+    `extra` adds template variables (digests add `digest`)."""
     rendered = rendering.render(
         body=template.body,
         subject=template.subject,
         format=template.format,
         context={
-            **notification.payload,
+            **(notification.payload if payload is None else payload),
             "recipient": {
                 "external_ref": recipient.external_ref,
                 "email": recipient.email,
                 "locale": recipient.locale,
             },
+            **(extra or {}),
         },
     )
     return DeliveryAttempt(
@@ -61,3 +69,30 @@ def outbox_entries(notification: Notification, attempts: Sequence[DeliveryAttemp
         )
         for a in attempts
     ]
+
+
+async def attempts_for(
+    uow: UnitOfWork,
+    rendering: RenderingService,
+    notification: Notification,
+    recipient: Recipient,
+    templates: Sequence[ChannelTemplate],
+    now: datetime,
+    *,
+    payload: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> list[DeliveryAttempt]:
+    """One attempt per channel the recipient has not opted out of; quiet hours hold an attempt until the window ends."""
+    prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
+    opted_out = {p.channel for p in prefs if not p.opted_in}
+    quiet = {p.channel: p.quiet_hours for p in prefs if p.quiet_hours is not None}
+    attempts = []
+    for template in templates:
+        if template.channel in opted_out:
+            continue
+        attempt = build_attempt(rendering, notification, recipient, template, payload=payload, extra=extra)
+        window = quiet.get(template.channel)
+        if window is not None:
+            attempt.next_retry_at = window.window_end(now)
+        attempts.append(attempt)
+    return attempts
