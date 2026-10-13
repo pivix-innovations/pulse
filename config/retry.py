@@ -13,3 +13,6 @@ class RetrySettings(ConfigSection):
     # Upper bound on one provider call. A timeout counts as a hard failure,
     # so the workflow's next provider for the channel is tried.
     provider_timeout_seconds: float = 30.0
+    # How long a worker may hold a delivery's dispatch lease. A crashed worker's
+    # lease expires after this; reconciliation's stuck TTLs must be longer.
+    dispatch_lease_seconds: int = 180

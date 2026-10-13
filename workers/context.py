@@ -30,7 +30,7 @@ async def build_worker_context(ctx: dict[str, Any]) -> None:
     ctx["delivery_service"] = DeliveryService(
         uow_factory=uow_factory,
         providers=ProviderRegistry(settings, redis=ctx["redis"]),
-        guard=RedisDispatchGuard(ctx["redis"]),
+        guard=RedisDispatchGuard(ctx["redis"], lease_seconds=settings.retry.dispatch_lease_seconds),
         publisher=ArqJobPublisher(ctx["redis"]),
         retry=settings.retry,
         breaker=RedisCircuitBreaker(ctx["redis"], settings.breaker),
