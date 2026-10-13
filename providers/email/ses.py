@@ -57,12 +57,12 @@ def classify_ses_error(exc: BaseException) -> ProviderSendError:
 
 class SesEmailProvider(EmailProvider):
     """
-    Amazon SES v2. Delivery/bounce events arrive via SNS, which Pulse does not
-    consume yet, so `sent` is final for SES.
+    Amazon SES v2. Delivery and bounce events come back through SNS: once the
+    tenant configures `sns_topic_arn`, delivery is confirmed by those events;
+    until then `sent` is final.
     """
 
     name = "ses"
-    confirms_delivery = False
 
     def __init__(
         self,
@@ -72,8 +72,10 @@ class SesEmailProvider(EmailProvider):
         secret_access_key: str,
         from_address: str,
         configuration_set: str | None = None,
+        receipts: bool = False,
         client: Any = None,
     ) -> None:
+        self.confirms_delivery = receipts
         self._from = from_address
         self._configuration_set = configuration_set
         self._client = client or build_client(region, access_key_id, secret_access_key)

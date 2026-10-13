@@ -237,6 +237,7 @@ def _build_ses(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext)
         secret_access_key=secrets["secret_access_key"],
         from_address=config["from_address"],
         configuration_set=config.get("configuration_set"),
+        receipts=bool(config.get("sns_topic_arn")),
     )
 
 
@@ -335,7 +336,12 @@ _SPECS: tuple[ProviderSpec, ...] = (
         fields=(
             ConfigField("region", "AWS region", default="us-east-1", required=True),
             ConfigField("from_address", "From address", required=True, help="Must be a verified identity in SES."),
-            ConfigField("configuration_set", "Configuration set", help="Optional, for event publishing."),
+            ConfigField("configuration_set", "Configuration set", help="Needed with the SNS topic below: the set must publish Delivery/Bounce events to it."),
+            ConfigField(
+                "sns_topic_arn", "SNS topic ARN",
+                help="Optional. Subscribe this provider's webhook URL (shown after saving) to the topic "
+                "to confirm delivery and catch bounces; Pulse confirms the subscription automatically.",
+            ),
             ConfigField("access_key_id", "Access key ID", secret=True, required=True),
             ConfigField("secret_access_key", "Secret access key", secret=True, required=True,
                         help="Grant the IAM user only ses:SendEmail (and ses:GetAccount to test)."),

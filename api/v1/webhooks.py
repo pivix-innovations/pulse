@@ -61,13 +61,16 @@ async def saved_provider_webhook(
 
         body = await request.body()
         try:
-            events = parse_receipt(
+            events = await parse_receipt(
                 spec.id,
                 url=webhook_url(request.app.state.settings.api.public_url, pid),
                 headers={k.lower(): v for k, v in request.headers.items()},
                 body=body,
                 config=provider.config,
                 secrets=secrets,
+                options={
+                    "allow_insecure_sns": request.app.state.settings.webhook.allow_insecure_sns
+                },
             )
         except ReceiptAuthError:
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
