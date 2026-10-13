@@ -164,3 +164,27 @@ async def test_dead_letters_page_newest_first_within_a_tenant(env):
         assert total == 2 and [d.id for d in page] == [made[1].id, made[0].id]
         assert (await uow.dead_letters.get(g.tenant, made[0].id)).reason == made[0].reason
         assert await uow.dead_letters.get(stranger.tenant, made[0].id) is None
+
+
+async def test_concurrent_first_events_for_a_new_recipient_do_not_collide(pg_env):
+    """Two ingests creating the same brand-new recipient at once must both succeed (was a 409)."""
+    import asyncio
+
+    from domain.entities.recipient import Recipient
+    from domain.value_objects.ids import RecipientId, TenantId
+
+    tenant = TenantId.new()
+
+    async def upsert(email):
+        async with pg_env.uow() as uow:
+            r = await uow.recipients.upsert_by_external_ref(
+                Recipient(id=RecipientId.new(), tenant_id=tenant, external_ref="newcomer", email=email)
+            )
+            await uow.commit()
+            return r
+
+    results = await asyncio.gather(*(upsert(f"e{i}@example.com") for i in range(10)))
+    assert len({r.id for r in results}) == 1            # everyone got the same recipient
+    async with pg_env.uow() as uow:
+        stored = await uow.recipients.get_by_external_ref(tenant, "newcomer")
+    assert stored.id == results[0].id and stored.email.endswith("@example.com")

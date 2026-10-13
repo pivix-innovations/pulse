@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import RecipientModel
@@ -45,23 +46,11 @@ class PostgresRecipientRepository:
         return _to_entity(row) if row else None
 
     async def upsert_by_external_ref(self, recipient: Recipient) -> Recipient:
-        stmt = select(RecipientModel).where(
-            RecipientModel.tenant_id == recipient.tenant_id.value,
-            RecipientModel.external_ref == recipient.external_ref,
-        )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        if row is not None:
-            row.email = recipient.email
-            row.phone = recipient.phone
-            row.locale = recipient.locale
-            row.timezone = recipient.timezone
-            await self._session.flush()
-            # flush expires server-side updated_at; refresh so mapping stays sync
-            await self._session.refresh(row)
-            return _to_entity(row)
-
-        self._session.add(
-            RecipientModel(
+        # One atomic statement: a select-then-insert lets two concurrent events for
+        # the same brand-new recipient collide on the unique (tenant, external_ref).
+        stmt = (
+            pg_insert(RecipientModel)
+            .values(
                 id=recipient.id.value,
                 tenant_id=recipient.tenant_id.value,
                 external_ref=recipient.external_ref,
@@ -70,6 +59,17 @@ class PostgresRecipientRepository:
                 locale=recipient.locale,
                 timezone=recipient.timezone,
             )
+            .on_conflict_do_update(
+                index_elements=[RecipientModel.tenant_id, RecipientModel.external_ref],
+                set_={
+                    "email": recipient.email,
+                    "phone": recipient.phone,
+                    "locale": recipient.locale,
+                    "timezone": recipient.timezone,
+                    "updated_at": func.now(),
+                },
+            )
+            .returning(RecipientModel)
         )
-        await self._session.flush()
-        return recipient
+        row = (await self._session.execute(stmt, execution_options={"populate_existing": True})).scalar_one()
+        return _to_entity(row)
