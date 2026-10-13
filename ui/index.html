@@ -1330,7 +1330,32 @@ function providerConfigForm(spec, p = {}) {
       <div class="secret-hint">How you'll recognise this provider when adding it to workflows.</div></div>
     ${spec.builtin ? `<div class="muted" style="margin-bottom:12px">No setup needed.</div>` : ""}
     ${spec.fields.map(f => fieldInput(f, p, isEdit)).join("")}
-    <label class="check"><input type="checkbox" name="is_active" ${p.is_active !== false ? "checked" : ""}> Active</label>`;
+    <label class="check"><input type="checkbox" name="is_active" ${p.is_active !== false ? "checked" : ""}> Active</label>
+    ${spec.testable ? `<div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+        <button type="button" class="btn sm" data-test>Test connection</button>
+        <span class="muted" data-test-result></span></div>` : ""}`;
+}
+
+/* Wires the "Test connection" button of an open provider modal. */
+function wireConnectionTest(spec, existing = {}) {
+  const root = $("#modal-root");
+  const btn = root.querySelector("[data-test]");
+  if (!btn) return;
+  const out = root.querySelector("[data-test-result]");
+  btn.addEventListener("click", async () => {
+    const form = root.querySelector("form");
+    const body = providerFromConfigForm(new FormData(form), spec, existing);
+    btn.disabled = true; out.style.color = ""; out.textContent = "Testing…";
+    try {
+      const r = await api(`/provider-catalog/${spec.channel}/${spec.key}/test`, {
+        method: "POST",
+        body: JSON.stringify({ config: body.config, secrets: body.secrets, provider_id: existing.id || null }),
+      });
+      out.textContent = (r.ok ? "✓ " : "✕ ") + r.detail;
+      out.style.color = r.ok ? "var(--green)" : "var(--red)";
+    } catch (err) { out.textContent = err.message; out.style.color = "var(--red)"; }
+    finally { btn.disabled = false; }
+  });
 }
 
 function providerFromConfigForm(fd, spec, existing = {}) {
@@ -1423,6 +1448,7 @@ function renderProviders(el) {
             toast("Provider updated", "ok"); load();
           },
         });
+        wireConnectionTest(spec, p);
       }));
       list.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
         if (!confirm("Delete this provider?")) return;
@@ -1443,6 +1469,7 @@ function renderProviders(el) {
         toast("Provider saved", "ok"); load();
       },
     });
+    wireConnectionTest(spec);
   });
   load();
 }
