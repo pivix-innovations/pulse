@@ -37,9 +37,10 @@ class ProviderRegistry:
     1. The workflow's own chain (`definition.provider_chains[channel]`, saved
        providers in priority order), skipping any that are inactive,
        deleted or unbuildable.
-    2. Otherwise the tenant's highest-priority active saved provider for the
-       channel (how things worked before workflows had chains).
-    3. Otherwise the env-configured default.
+    2. Otherwise the env-configured default.
+
+    A saved provider is only ever used by the workflows whose chains name it:
+    adding one for a workflow never reroutes another.
     """
 
     def __init__(
@@ -73,18 +74,7 @@ class ProviderRegistry:
             if chain:
                 return chain
 
-        stored = await uow.providers.get_active_by_channel(tenant_id, channel)
-        if stored is not None:
-            built = self._build(stored)
-            if built is not None:
-                return [ResolvedProvider(built, stored.id, stored.label or stored.name)]
         return [ResolvedProvider(self.get(channel), None, "default")]
-
-    async def resolve(
-        self, uow: UnitOfWork, tenant_id: TenantId, channel: ChannelType
-    ) -> tuple[NotificationProvider, ProviderId | None]:
-        first = (await self.resolve_chain(uow, tenant_id, channel))[0]
-        return first.provider, first.provider_id
 
     async def _workflow_chain(
         self, uow: UnitOfWork, tenant_id: TenantId, channel: ChannelType, workflow_id: WorkflowId
@@ -109,7 +99,7 @@ class ProviderRegistry:
                 chain.append(ResolvedProvider(built, row.id, row.label or row.name))
         if raw_ids and not chain:
             logger.warning(
-                "Workflow %s: no usable provider in its %s chain; using the tenant default",
+                "Workflow %s: no usable provider in its %s chain; using the default",
                 workflow_id,
                 channel.value,
             )

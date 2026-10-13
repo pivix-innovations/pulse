@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import ProviderModel
 from domain.entities.provider import Provider
-from domain.enums import ChannelType
 from domain.value_objects.ids import ProviderId, TenantId
 
 
@@ -80,22 +79,6 @@ class PostgresProviderRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
-
-    async def get_active_by_channel(
-        self, tenant_id: TenantId, channel: ChannelType
-    ) -> Provider | None:
-        stmt = (
-            select(ProviderModel)
-            .where(
-                ProviderModel.tenant_id == tenant_id.value,
-                ProviderModel.channel == channel,
-                ProviderModel.is_active.is_(True),
-            )
-            .order_by(ProviderModel.priority.desc(), ProviderModel.created_at)
-            .limit(1)
-        )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _to_entity(row) if row else None
 
     async def update(self, provider: Provider) -> None:
         row = await self._session.get(ProviderModel, provider.id.value)

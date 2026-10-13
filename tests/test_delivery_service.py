@@ -264,37 +264,3 @@ async def test_fire_and_forget_send_settles_notification_immediately():
     await make_service(uow, FakeProvider(confirms_delivery=False)).deliver(tenant, attempt.id)
 
     assert notification.status is NotificationStatus.COMPLETED
-
-
-async def test_provider_registry_prefers_tenant_row_and_falls_back_to_default():
-    from config.settings import Settings
-    from domain.entities.provider import Provider
-    from domain.value_objects.ids import ProviderId
-    from providers.registry import ProviderRegistry
-
-    uow = InMemoryUnitOfWork()
-    tenant = TenantId.new()
-    registry = ProviderRegistry(Settings())
-
-    default, default_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert default_id is None and default.name == "console"
-
-    row = Provider(
-        id=ProviderId.new(),
-        tenant_id=tenant,
-        channel=ChannelType.EMAIL,
-        name="smtp",
-        config={"smtp_host": "mail.tenant.test", "from_address": "x@tenant.test"},
-    )
-    await uow.providers.add(row)
-    stored, stored_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert stored_id == row.id and stored.name == "smtp"
-    assert stored._settings.smtp_host == "mail.tenant.test"
-
-    # Another tenant is unaffected; an unknown driver name falls back.
-    _, other_id = await registry.resolve(uow, TenantId.new(), ChannelType.EMAIL)
-    assert other_id is None
-    row.name = "nope"
-    row.updated_at = datetime.now(timezone.utc)
-    fallback, fallback_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert fallback_id is None and fallback.name == "console"

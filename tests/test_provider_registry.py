@@ -70,20 +70,32 @@ async def test_inactive_missing_and_wrong_channel_providers_are_skipped():
     assert await labels(registry(), uow, wf) == ["ok"]
 
 
-async def test_unusable_chain_falls_back_to_tenant_provider_then_env_default():
+async def test_unusable_chain_falls_back_to_the_env_default():
     uow = InMemoryUnitOfWork()
     off = await add_provider(uow, label="off", is_active=False)
     wf = await add_workflow(uow, {"email": [str(off.id)]})
     assert await labels(registry(), uow, wf) == ["default"]
-    await add_provider(uow, label="tenant-default", priority=5)
-    assert await labels(registry(), uow, wf) == ["tenant-default"]
 
 
-async def test_workflow_without_chain_uses_tenant_then_env_default():
+async def test_workflow_without_a_chain_uses_the_env_default():
     uow = InMemoryUnitOfWork()
     wf = await add_workflow(uow, {})
     assert await labels(registry(), uow, wf) == ["default"]
     assert await labels(registry(), uow, None) == ["default"]
+
+
+async def test_a_providers_chain_never_leaks_into_another_workflow():
+    """Adding a provider for workflow A must not reroute workflow B (or chainless sends)."""
+    uow = InMemoryUnitOfWork()
+    mine = await add_provider(uow, label="A's relay", priority=99)
+    a = await add_workflow(uow, {"email": [str(mine.id)]})
+    b = await add_workflow(uow, {})
+    other_channel = await add_workflow(uow, {"sms": [str(mine.id)]})  # wrong channel: ignored
+    reg = registry()
+    assert await labels(reg, uow, a) == ["A's relay"]
+    assert await labels(reg, uow, b) == ["default"]
+    assert await labels(reg, uow, other_channel) == ["default"]
+    assert await labels(reg, uow, None) == ["default"]
 
 
 async def test_secrets_are_decrypted_into_the_built_driver():
@@ -116,9 +128,10 @@ async def test_edited_provider_rebuilds_its_driver():
     from datetime import datetime, timezone
     p = await add_provider(uow, name="smtp", config={"host": "one", "from_address": "a@b.c"})
     p.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    wf = await add_workflow(uow, {"email": [str(p.id)]})
     reg = registry()
-    [first] = await reg.resolve_chain(uow, TENANT, ChannelType.EMAIL)
+    [first] = await reg.resolve_chain(uow, TENANT, ChannelType.EMAIL, wf.id)
     p.config = {"host": "two", "from_address": "a@b.c"}
     p.updated_at = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    [second] = await reg.resolve_chain(uow, TENANT, ChannelType.EMAIL)
+    [second] = await reg.resolve_chain(uow, TENANT, ChannelType.EMAIL, wf.id)
     assert (first.provider._settings.smtp_host, second.provider._settings.smtp_host) == ("one", "two")

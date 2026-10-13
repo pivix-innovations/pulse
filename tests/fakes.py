@@ -438,16 +438,6 @@ class InMemoryProviderRepository:
             p for p in self.items.values() if p.tenant_id == tenant_id and str(p.id) in wanted
         ]
 
-    async def get_active_by_channel(
-        self, tenant_id: TenantId, channel: ChannelType
-    ) -> Provider | None:
-        matches = [
-            p
-            for p in self.items.values()
-            if p.tenant_id == tenant_id and p.channel is channel and p.is_active
-        ]
-        return max(matches, key=lambda p: p.priority, default=None)
-
     async def update(self, provider: Provider) -> None:
         self.items[str(provider.id)] = provider
 
