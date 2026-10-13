@@ -25,7 +25,7 @@ from api.v1.sse import router as sse_router
 from api.v1.templates import router as templates_router
 from api.v1.webhooks import router as webhooks_router
 from api.v1.workflows import router as workflows_router
-from clients.sentinel_client import DatabaseRecipientClient
+from clients.sentinel_client import build_recipient_client
 from config.loader import get_settings
 from database.database import Database
 from repositories.uow import SqlAlchemyUnitOfWork
@@ -62,7 +62,7 @@ async def lifespan(app: FastAPI):
 
     app.state.notification_service = NotificationService(
         uow_factory=uow_factory,
-        sentinel=DatabaseRecipientClient(uow_factory),
+        sentinel=build_recipient_client(uow_factory, settings),
         registry=WorkflowRegistry(),
         rendering=RenderingService(),
     )
