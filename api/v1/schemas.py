@@ -53,6 +53,17 @@ class StepRunOut(BaseModel):
     reason: str | None = None   # why a step was skipped
 
 
+class DigestOut(BaseModel):
+    """The digest this notification's event was folded into."""
+
+    batch_id: uuid.UUID
+    status: str                      # open (still collecting) | flushed (sent)
+    flush_at: datetime               # when the digest is, or was, due
+    item_count: int
+    is_anchor: bool                  # the anchor's attempts carry the consolidated message
+    anchor_notification_id: uuid.UUID
+
+
 class NotificationOut(BaseModel):
     id: uuid.UUID
     status: NotificationStatus
@@ -61,6 +72,7 @@ class NotificationOut(BaseModel):
     created_at: datetime | None
     attempts: list[DeliveryAttemptOut]
     steps: list[StepRunOut] = []
+    digest: DigestOut | None = None
 
 
 class NotificationSummaryOut(BaseModel):

@@ -58,3 +58,51 @@ async def test_classic_notifications_have_no_steps(world):
     })
     detail = (await world.client.get(f"/api/v1/notifications/{r.json()['notification_id']}", headers=world.key_headers)).json()
     assert detail["steps"] == []
+
+
+# ── digests ────────────────────────────────────────────────────────────
+
+DIGEST = {
+    "channels": [{"channel": "email", "subject": "{{ digest.count }} new", "body": "b", "format": "text"}],
+    "digest": {"window": "10m", "max_items": 5},
+}
+
+
+async def test_a_digest_workflow_is_accepted(world):
+    res = await world.client.post("/api/v1/workflows", headers=world.key_headers, json=workflow(DIGEST, "c.added", "dg"))
+    assert res.status_code == 201, res.text
+
+
+@pytest.mark.parametrize("digest, message", [
+    ({"window": "soon"}, "digest window"),
+    ({"max_items": 5}, "window"),
+    ({"window": "1m", "max_items": 1}, "max_items"),
+])
+async def test_a_bad_digest_is_rejected_with_the_reason(world, digest, message):
+    res = await world.client.post("/api/v1/workflows", headers=world.key_headers,
+                                  json=workflow({**DIGEST, "digest": digest}, "c.added", "dg"))
+    assert res.status_code == 422 and message in res.text
+
+
+async def test_a_workflow_cannot_be_both_a_digest_and_a_sequence(world):
+    res = await world.client.post("/api/v1/workflows", headers=world.key_headers, json=workflow(
+        {"steps": STEPS, "digest": {"window": "1m"}}, "c.added", "both"))
+    assert res.status_code == 422 and "not both" in res.text
+
+
+async def test_a_buffered_notification_reports_its_digest(world):
+    await world.client.post("/api/v1/workflows", headers=world.key_headers, json=workflow(DIGEST, "user.signup", "dg"))
+    ids = []
+    for i in range(2):
+        r = await world.client.post("/api/v1/events", headers=world.key_headers, json={
+            "event_type": "user.signup", "source": "t", "idempotency_key": f"d{i}"})
+        assert r.status_code == 202, r.text
+        ids.append(r.json()["notification_id"])
+    first, second = [
+        (await world.client.get(f"/api/v1/notifications/{n}", headers=world.key_headers)).json() for n in ids
+    ]
+    assert first["attempts"] == [] and first["status"] == "processing"
+    assert first["digest"]["status"] == "open" and first["digest"]["item_count"] == 2
+    assert first["digest"]["is_anchor"] is True and second["digest"]["is_anchor"] is False
+    assert second["digest"]["anchor_notification_id"] == ids[0]
+    assert first["digest"]["batch_id"] == second["digest"]["batch_id"]
