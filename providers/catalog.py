@@ -15,6 +15,7 @@ from config.email import EmailSettings
 from domain.enums import ChannelType
 from providers.email.console import ConsoleEmailProvider
 from providers.email.resend import ResendEmailProvider, check_resend
+from providers.email.ses import SesEmailProvider, check_ses
 from providers.email.sendgrid import SendGridEmailProvider, check_sendgrid
 from providers.email.smtp import SmtpEmailProvider
 from providers.receipts import supports_receipts
@@ -229,6 +230,16 @@ def _build_resend(config: dict[str, Any], secrets: dict[str, Any], _: BuildConte
     )
 
 
+def _build_ses(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
+    return SesEmailProvider(
+        region=config.get("region", "us-east-1"),
+        access_key_id=secrets["access_key_id"],
+        secret_access_key=secrets["secret_access_key"],
+        from_address=config["from_address"],
+        configuration_set=config.get("configuration_set"),
+    )
+
+
 def _build_sendgrid(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
     return SendGridEmailProvider(
         api_key=secrets["api_key"],
@@ -260,6 +271,12 @@ async def _check_smtp(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[
 
 async def _check_twilio(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
     return await check_twilio(config["account_sid"], secrets["auth_token"])
+
+
+async def _check_ses(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    return await check_ses(
+        config.get("region", "us-east-1"), secrets["access_key_id"], secrets["secret_access_key"]
+    )
 
 
 async def _check_resend(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
@@ -307,6 +324,24 @@ _SPECS: tuple[ProviderSpec, ...] = (
             ConfigField("password", "Password", secret=True),
         ),
         check=_check_smtp,
+    ),
+    ProviderSpec(
+        key="ses",
+        channel=ChannelType.EMAIL,
+        name="Amazon SES",
+        description="Low-cost, high-volume email through AWS Simple Email Service.",
+        logo="email-ses.svg",
+        build=_build_ses,
+        fields=(
+            ConfigField("region", "AWS region", default="us-east-1", required=True),
+            ConfigField("from_address", "From address", required=True, help="Must be a verified identity in SES."),
+            ConfigField("configuration_set", "Configuration set", help="Optional, for event publishing."),
+            ConfigField("access_key_id", "Access key ID", secret=True, required=True),
+            ConfigField("secret_access_key", "Secret access key", secret=True, required=True,
+                        help="Grant the IAM user only ses:SendEmail (and ses:GetAccount to test)."),
+        ),
+        check=_check_ses,
+        docs_url="https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_SendEmail.html",
     ),
     ProviderSpec(
         key="resend",
