@@ -12,6 +12,7 @@ from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, OutboxEntr
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
 from services.settlement import settle_notification
+from services.templates import TemplateUnavailable, resolve
 from workflows.registry import WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,12 @@ class ReconciliationService:
             )
             return False
 
+        try:
+            template = await resolve(uow, source.tenant_id, template, recipient.locale)
+        except TemplateUnavailable as exc:
+            # One bad template must not wedge the sweep: treat the fallback as unusable.
+            logger.warning("Cannot escalate attempt %s to '%s': %s", source.id, fallback_channel.value, exc)
+            return False
         rendered = self._rendering.render(
             body=template.body,
             subject=template.subject,

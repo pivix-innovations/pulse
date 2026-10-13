@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from api.dependencies import get_notification_service, get_uow, require_scope
 from api.v1.schemas import EventAccepted, EventIn, EventOut
 from domain.value_objects.ids import TenantId
+from services.templates import TemplateUnavailable
 from telemetry.metrics import get_metrics
 from services.ports.clients import SentinelUnavailable
 from repositories.uow import SqlAlchemyUnitOfWork
@@ -66,6 +67,10 @@ async def ingest_event(
             detail="The recipient directory is temporarily unavailable; retry shortly",
             headers={"Retry-After": "5"},
         ) from exc
+    except TemplateUnavailable as exc:
+        if limiter is not None:
+            await limiter.refund(tenant_id)
+        raise HTTPException(status_code=422, detail=str(exc))
     except (UnknownEventType, NoRecipientsResolved) as exc:
         if limiter is not None:  # a rejected event shouldn't eat the tenant's quota
             await limiter.refund(tenant_id)

@@ -10,8 +10,20 @@ from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
 from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId
 from services.ports.uow import UnitOfWork
+from services.templates import resolve
 from services.rendering_service import RenderingService
 from workflows.channel_template import ChannelTemplate
+
+
+def render_context(
+    payload: dict[str, Any], recipient: dict[str, Any], extra: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The variables a template sees: the event payload, `recipient`, and any extras (e.g. `digest`)."""
+    return {**payload, "recipient": recipient, **(extra or {})}
+
+
+def recipient_context(recipient: Recipient) -> dict[str, Any]:
+    return {"external_ref": recipient.external_ref, "email": recipient.email, "locale": recipient.locale}
 
 
 def build_attempt(
@@ -29,15 +41,9 @@ def build_attempt(
         body=template.body,
         subject=template.subject,
         format=template.format,
-        context={
-            **(notification.payload if payload is None else payload),
-            "recipient": {
-                "external_ref": recipient.external_ref,
-                "email": recipient.email,
-                "locale": recipient.locale,
-            },
-            **(extra or {}),
-        },
+        context=render_context(
+            notification.payload if payload is None else payload, recipient_context(recipient), extra
+        ),
     )
     return DeliveryAttempt(
         id=DeliveryAttemptId.new(),
@@ -90,6 +96,7 @@ async def attempts_for(
     for template in templates:
         if template.channel in opted_out:
             continue
+        template = await resolve(uow, notification.tenant_id, template, recipient.locale)
         attempt = build_attempt(rendering, notification, recipient, template, payload=payload, extra=extra)
         window = quiet.get(template.channel)
         if window is not None:

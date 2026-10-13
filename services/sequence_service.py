@@ -17,6 +17,7 @@ from services.attempts import build_attempt, outbox_entries
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
 from services.settlement import settle_notification
+from services.templates import resolve
 from telemetry.metrics import get_metrics
 from workflows.registry import WorkflowDefinition
 from workflows.steps import Step, check_payload, status_matches
@@ -110,7 +111,8 @@ class SequenceEngine:
             return None
         if await uow.delivery_attempts.get_by_dispatch(notification.id, recipient.id, step.channel) is not None:
             return None
-        attempt = build_attempt(self._rendering, notification, recipient, step.template)
+        template = await resolve(uow, notification.tenant_id, step.template, recipient.locale)
+        attempt = build_attempt(self._rendering, notification, recipient, template)
         window = next((p.quiet_hours for p in prefs if p.channel is step.channel and p.quiet_hours), None)
         if window is not None:
             attempt.next_retry_at = window.window_end(now)   # held until their quiet window ends
