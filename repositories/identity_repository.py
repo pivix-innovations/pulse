@@ -44,6 +44,8 @@ def _api_key(row: ApiKeyModel) -> ApiKey:
     return ApiKey(
         id=ApiKeyId(row.id), tenant_id=TenantId(row.tenant_id), name=row.name,
         prefix=row.prefix, key_hash=row.key_hash, is_active=row.is_active,
+        scopes=tuple(row.scopes or ()), expires_at=row.expires_at, last_used_at=row.last_used_at,
+        rotated_from_id=ApiKeyId(row.rotated_from_id) if row.rotated_from_id else None,
         created_at=row.created_at,
     )
 
@@ -193,6 +195,8 @@ class PostgresApiKeyRepository:
         self._session.add(ApiKeyModel(
             id=key.id.value, tenant_id=key.tenant_id.value, name=key.name,
             prefix=key.prefix, key_hash=key.key_hash, is_active=key.is_active,
+            scopes=list(key.scopes), expires_at=key.expires_at,
+            rotated_from_id=key.rotated_from_id.value if key.rotated_from_id else None,
         ))
 
     async def get_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -208,6 +212,22 @@ class PostgresApiKeyRepository:
             .order_by(ApiKeyModel.created_at)
         )).scalars().all()
         return [_api_key(r) for r in rows]
+
+    async def get(self, tenant_id: TenantId, key_id: ApiKeyId) -> ApiKey | None:
+        row = await self._session.get(ApiKeyModel, key_id.value)
+        return _api_key(row) if row is not None and row.tenant_id == tenant_id.value else None
+
+    async def set_expiry(self, tenant_id: TenantId, key_id: ApiKeyId, expires_at: datetime | None) -> bool:
+        row = await self._session.get(ApiKeyModel, key_id.value)
+        if row is None or row.tenant_id != tenant_id.value:
+            return False
+        row.expires_at = expires_at
+        return True
+
+    async def touch(self, key_id: ApiKeyId, at: datetime) -> None:
+        row = await self._session.get(ApiKeyModel, key_id.value)
+        if row is not None:
+            row.last_used_at = at
 
     async def revoke(self, tenant_id: TenantId, key_id: ApiKeyId) -> bool:
         row = await self._session.get(ApiKeyModel, key_id.value)

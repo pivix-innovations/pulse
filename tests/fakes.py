@@ -633,8 +633,24 @@ class InMemoryApiKeyRepository:
     async def get_by_hash(self, key_hash: str) -> ApiKey | None:
         return next((k for k in self.items.values() if k.key_hash == key_hash), None)
 
+    async def get(self, tenant_id: TenantId, key_id: ApiKeyId) -> ApiKey | None:
+        key = self.items.get(str(key_id))
+        return key if key and key.tenant_id == tenant_id else None
+
     async def list_for_tenant(self, tenant_id: TenantId) -> list[ApiKey]:
         return [k for k in self.items.values() if k.tenant_id == tenant_id]
+
+    async def set_expiry(self, tenant_id: TenantId, key_id: ApiKeyId, expires_at) -> bool:
+        key = await self.get(tenant_id, key_id)
+        if key is None:
+            return False
+        key.expires_at = expires_at
+        return True
+
+    async def touch(self, key_id: ApiKeyId, at) -> None:
+        key = self.items.get(str(key_id))
+        if key is not None:
+            key.last_used_at = at
 
     async def revoke(self, tenant_id: TenantId, key_id: ApiKeyId) -> bool:
         key = self.items.get(str(key_id))

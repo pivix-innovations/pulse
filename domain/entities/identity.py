@@ -63,7 +63,16 @@ class ApiKey:
     prefix: str
     key_hash: str
     is_active: bool = True
+    # What the key may do (see domain.value_objects.scopes). Keys created
+    # before scopes existed hold all of them.
+    scopes: tuple[str, ...] = ("ingest", "read", "client", "admin")
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
+    rotated_from_id: ApiKeyId | None = None   # the key this one replaced
     created_at: datetime | None = None
+
+    def is_usable(self, now: datetime) -> bool:
+        return self.is_active and (self.expires_at is None or self.expires_at > now)
 
 
 @dataclass(slots=True)
