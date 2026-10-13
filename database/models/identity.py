@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -17,6 +17,9 @@ class TenantModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rate_limit_per_second: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rate_burst: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_quota: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class UserModel(Base, UUIDPrimaryKeyMixin, TimestampMixin):

@@ -20,7 +20,8 @@ from domain.value_objects.ids import ApiKeyId, MembershipId, SessionId, TenantId
 def _tenant(row: TenantModel) -> Tenant:
     return Tenant(
         id=TenantId(row.id), name=row.name, slug=row.slug, is_active=row.is_active,
-        created_at=row.created_at, updated_at=row.updated_at,
+        rate_limit_per_second=row.rate_limit_per_second, rate_burst=row.rate_burst,
+        daily_quota=row.daily_quota, created_at=row.created_at, updated_at=row.updated_at,
     )
 
 
@@ -61,6 +62,8 @@ class PostgresTenantRepository:
     async def add(self, tenant: Tenant) -> None:
         self._session.add(TenantModel(
             id=tenant.id.value, name=tenant.name, slug=tenant.slug, is_active=tenant.is_active,
+            rate_limit_per_second=tenant.rate_limit_per_second, rate_burst=tenant.rate_burst,
+            daily_quota=tenant.daily_quota,
         ))
 
     async def get(self, tenant_id: TenantId) -> Tenant | None:
@@ -84,6 +87,9 @@ class PostgresTenantRepository:
         if row is None:
             raise LookupError(f"Tenant {tenant.id} not found")
         row.name, row.slug, row.is_active = tenant.name, tenant.slug, tenant.is_active
+        row.rate_limit_per_second = tenant.rate_limit_per_second
+        row.rate_burst = tenant.rate_burst
+        row.daily_quota = tenant.daily_quota
 
 
 class PostgresUserRepository:

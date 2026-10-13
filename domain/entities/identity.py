@@ -15,6 +15,10 @@ class Tenant:
     name: str
     slug: str
     is_active: bool = True
+    # Ingress limits for POST /events. None means "the platform default".
+    rate_limit_per_second: float | None = None
+    rate_burst: int | None = None
+    daily_quota: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
