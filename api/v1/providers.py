@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,7 @@ from domain.value_objects.ids import ProviderId, TenantId
 from providers.receipts import supports_receipts, webhook_path, webhook_url
 from providers.catalog import ProviderSpec, get_spec, list_specs
 from repositories.uow import SqlAlchemyUnitOfWork
+from services.provider_health import assess
 from services.secrets import SecretBox, SecretsDecryptionError, SecretsNotConfigured
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -243,6 +244,47 @@ async def list_providers(
         for p in providers
         if channel is None or p.channel is channel
     ]
+
+
+class ProviderHealthOut(BaseModel):
+    provider_id: uuid.UUID
+    status: str  # healthy | degraded | down | idle
+    window_hours: int
+    calls: int
+    failures: int
+    success_rate: float | None
+    avg_latency_ms: float | None
+    p95_latency_ms: float | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_error: str | None
+
+
+@router.get("/health", response_model=list[ProviderHealthOut])
+async def providers_health(
+    window_hours: int = Query(default=24, ge=1, le=24 * 30),
+    tenant_id: TenantId = Depends(require_tenant),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+) -> list[ProviderHealthOut]:
+    """
+    Live health of each saved provider from its recent calls: success rate,
+    latency and the last failure. Recipient errors (bad numbers, refused
+    addresses) are not held against a provider.
+    """
+    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    async with uow:
+        providers = await uow.providers.list(tenant_id)
+        stats = await uow.provider_calls.stats(tenant_id, since)
+    out = []
+    for p in providers:
+        h = assess(stats.get(p.id))
+        out.append(ProviderHealthOut(provider_id=p.id.value, window_hours=window_hours, **{
+            k: getattr(h, k) for k in (
+                "status", "calls", "failures", "success_rate", "avg_latency_ms",
+                "p95_latency_ms", "last_success_at", "last_failure_at", "last_error",
+            )
+        }))
+    return out
 
 
 @router.get("/{provider_id}", response_model=ProviderOut)

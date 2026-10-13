@@ -208,3 +208,28 @@ async def test_untestable_provider_returns_422(world):
         "/api/v1/provider-catalog/sms/console/test", json={}, headers=world.key_headers
     )
     assert r.status_code == 422
+
+
+async def test_health_endpoint_reports_per_provider_status(world):
+    from datetime import datetime, timezone
+
+    from domain.entities.provider_call import ProviderCall
+    from domain.enums import ChannelType
+    from domain.value_objects.ids import DeliveryAttemptId, ProviderId
+
+    busy = (await create(world, {"channel": "sms", "name": "console", "label": "Busy"})).json()["id"]
+    quiet = (await create(world, {"channel": "sms", "name": "console", "label": "Quiet"})).json()["id"]
+    await world.uow.provider_calls.add_many([
+        ProviderCall(
+            tenant_id=world.tenant_id, provider_id=ProviderId.from_str(busy),
+            attempt_id=DeliveryAttemptId.new(), channel=ChannelType.SMS,
+            outcome="provider_error", latency_ms=50, error="503 from upstream",
+            created_at=datetime.now(timezone.utc),
+        )
+        for _ in range(3)
+    ])
+    r = await world.client.get("/api/v1/providers/health", headers=world.key_headers)
+    assert r.status_code == 200
+    by_id = {h["provider_id"]: h for h in r.json()}
+    assert by_id[busy]["status"] == "down" and by_id[busy]["last_error"] == "503 from upstream"
+    assert by_id[quiet]["status"] == "idle" and by_id[quiet]["success_rate"] is None
