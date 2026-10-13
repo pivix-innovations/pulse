@@ -14,6 +14,7 @@ from config.reconciliation import ReconciliationSettings
 from config.redis import RedisSettings
 from config.retry import RetrySettings
 from config.security import SecuritySettings
+from config.sentinel import SentinelSettings
 from config.webhook import WebhookSettings
 
 
@@ -32,5 +33,6 @@ class Settings(EnvironmentSettings):
     retry: RetrySettings = RetrySettings()
     breaker: BreakerSettings = BreakerSettings()
     rate_limit: RateLimitSettings = RateLimitSettings()
+    sentinel: SentinelSettings = SentinelSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
     webhook: WebhookSettings = WebhookSettings()
