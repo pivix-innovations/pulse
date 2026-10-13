@@ -169,6 +169,11 @@ pulse/
 └── tests/
 ```
 
+## Observability
+
+Metrics are exported with OpenTelemetry over OTLP; OpenObserve is the reference backend. See
+[docs/observability.md](docs/observability.md) for setup, the metric catalogue and suggested alerts.
+
 ## Testing
 
 ```bash

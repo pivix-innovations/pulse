@@ -38,7 +38,7 @@
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
 | D1 | OpenTelemetry tracing | Medium | L | Propagate `traceparent` through outbox entries and arq payloads: HTTP → relay → worker → webhook. |
-| D2 | Prometheus metrics & alerts | High | M | Outbox lag, queue depth, stuck `dispatching` count, dead-letter rate, per-provider error rate. |
+| D2 | Metrics & alerts (OpenTelemetry → OpenObserve) ✅ | High | M | Outbox lag, queue depth, stuck attempts, dead-letter rate, per-provider error rate and latency. OTLP export, so D1 tracing reuses it; see [observability.md](observability.md). |
 | D3 | Structured log correlation | Medium | S | Carry `notification_id`, `tenant_id` and `attempt_id` on every log line. |
 | D4 | Runbook | Low | S | Dead-letter replay, stuck-outbox recovery, provider failover. |
 
