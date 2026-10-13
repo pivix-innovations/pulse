@@ -9,10 +9,17 @@ from typing import Protocol
 from config.retry import RetrySettings
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
+from domain.entities.inbox import InboxMessage
 from domain.entities.provider_call import ProviderCall
 from telemetry.metrics import get_metrics
 from domain.enums import ChannelType, DeliveryStatus
-from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId, WorkflowId
+from domain.value_objects.ids import (
+    DeadLetterId,
+    DeliveryAttemptId,
+    InboxMessageId,
+    TenantId,
+    WorkflowId,
+)
 from jobqueue.retry import compute_backoff
 from services.ports.circuit_breaker import CircuitBreaker
 from services.ports.dispatch_guard import DispatchGuard
@@ -120,6 +127,20 @@ class DeliveryService:
                 attempt.channel,
                 notification.workflow_id if notification else None,
             )
+            if attempt.channel is ChannelType.IN_APP:
+                # Persist first: the live push is best effort, the inbox is the record.
+                stored = await uow.inbox.add(
+                    InboxMessage(
+                        id=InboxMessageId.new(),
+                        tenant_id=attempt.tenant_id,
+                        recipient_id=attempt.recipient_id,
+                        notification_id=attempt.notification_id,
+                        attempt_id=attempt.id,
+                        title=attempt.subject,
+                        body=attempt.body or "",
+                    )
+                )
+                message.metadata["inbox_id"] = str(stored.id)
             # Claim: committed before the provider call so a crash mid-send
             # leaves a marker the reconciliation sweep can find.
             attempt.mark_dispatching(datetime.now(timezone.utc))

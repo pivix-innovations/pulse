@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import pytest
-
 from domain.enums import ChannelType
 from domain.value_objects.ids import RecipientId, TenantId
 from providers.in_app.sse import SseInAppProvider
-from services.ports.providers import OutboundMessage, ProviderSendError
+from services.ports.providers import OutboundMessage
 
 
 class FakeBroadcaster:
@@ -36,15 +34,23 @@ async def test_publishes_to_the_recipients_channel_and_reports_receivers():
     assert result.provider_message_id == "sse-receivers-2"
     [(t, r, event)] = bc.published
     assert (t, r) == (tenant, recipient)
-    assert event == {"id": "att-1", "notification_id": "n-1", "title": "Hi", "body": "Body"}
+    assert event == {
+        "id": "att-1", "inbox_id": None, "notification_id": "n-1", "title": "Hi", "body": "Body",
+    }
 
 
-async def test_no_live_connection_is_a_recipient_state_not_a_provider_fault():
+async def test_an_offline_recipient_is_not_a_failure_the_message_waits_in_the_inbox():
     msg, *_ = message()
-    with pytest.raises(ProviderSendError) as err:
-        await SseInAppProvider(FakeBroadcaster(receivers=0)).send(msg)
-    # Not retried and no failover: the channel-level fallback (e.g. push) takes over.
-    assert err.value.retryable is False and err.value.failover is False
+    result = await SseInAppProvider(FakeBroadcaster(receivers=0)).send(msg)
+    assert result.provider_message_id == "sse-receivers-0"
+
+
+async def test_the_inbox_id_travels_with_the_live_event():
+    msg, *_ = message()
+    msg.metadata["inbox_id"] = "inbox-9"
+    bc = FakeBroadcaster(receivers=1)
+    await SseInAppProvider(bc).send(msg)
+    assert bc.published[0][2]["inbox_id"] == "inbox-9"
 
 
 def test_sse_confirms_delivery_so_the_client_ack_is_required():

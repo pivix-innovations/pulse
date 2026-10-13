@@ -264,3 +264,42 @@ async def test_fire_and_forget_send_settles_notification_immediately():
     await make_service(uow, FakeProvider(confirms_delivery=False)).deliver(tenant, attempt.id)
 
     assert notification.status is NotificationStatus.COMPLETED
+
+
+# ── in-app: the inbox is the record, the live push is best effort ─────
+
+
+async def test_in_app_delivery_stores_the_message_before_pushing_it():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant, ChannelType.IN_APP)
+    provider = FakeProvider(ChannelType.IN_APP)
+
+    assert await make_service(uow, provider).deliver(tenant, attempt.id) == "sent"
+
+    [stored] = uow.inbox.items.values()
+    assert (stored.title, stored.body, stored.attempt_id) == ("hi", "hello", attempt.id)
+    assert stored.recipient_id == attempt.recipient_id and not stored.is_read
+    # the live event carries the inbox id so a client can mark exactly that message read
+    assert provider.sent[0].metadata["inbox_id"] == str(stored.id)
+
+
+async def test_a_redelivered_in_app_job_does_not_duplicate_the_message():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant, ChannelType.IN_APP)
+    provider = FakeProvider(ChannelType.IN_APP, error=ProviderSendError("redis blip", retryable=True))
+    service = make_service(uow, provider)
+
+    assert await service.deliver(tenant, attempt.id) == "retrying"   # push failed, message already stored
+    provider.error = None
+    assert await service.deliver(tenant, attempt.id) == "sent"
+    assert len(uow.inbox.items) == 1
+
+
+async def test_other_channels_never_touch_the_inbox():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant, ChannelType.EMAIL)
+    await make_service(uow, FakeProvider()).deliver(tenant, attempt.id)
+    assert uow.inbox.items == {}

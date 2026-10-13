@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from domain.value_objects.ids import RecipientId, TenantId
 from providers.in_app.base import InAppProvider
-from services.ports.providers import OutboundMessage, ProviderSendError, SendResult
+from services.ports.providers import OutboundMessage, SendResult
 from sse.broadcaster import SseBroadcaster
 
 
 class SseInAppProvider(InAppProvider):
     """
-    Delivers in-app notifications over the SSE pub/sub fabric. `sent` here
-    means a live connection received the publish; the client's ack makes it
-    `delivered`. No live connection is a non-retryable failure -- the
-    reconciliation sweep escalates it to the workflow's fallback channel.
+    Live half of in-app delivery: pushes the message (already stored in the
+    recipient's inbox) to any connected SSE clients. An offline recipient is
+    not a failure -- the message waits in the inbox. `sent` means it is stored;
+    reading it (or the client's ack) makes it `delivered`, and if that never
+    happens the reconciliation sweep escalates to the workflow's fallback
+    channel.
     """
 
     name = "sse"
@@ -28,13 +30,10 @@ class SseInAppProvider(InAppProvider):
             recipient_id,
             {
                 "id": message.metadata.get("attempt_id"),
+                "inbox_id": message.metadata.get("inbox_id"),
                 "notification_id": message.metadata.get("notification_id"),
                 "title": message.subject,
                 "body": message.body_text,
             },
         )
-        if receivers == 0:
-            raise ProviderSendError(
-                "No live SSE connection for recipient", retryable=False, failover=False
-            )
         return SendResult(provider_message_id=f"sse-receivers-{receivers}")
