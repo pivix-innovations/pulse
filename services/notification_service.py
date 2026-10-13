@@ -69,15 +69,11 @@ class NotificationService:
         self._rendering = rendering
 
     async def process_event(self, tenant_id: TenantId, incoming: IncomingEvent) -> NotificationId:
-        resolved = await self._sentinel.resolve_recipients(
-            tenant_id, incoming.event_type, incoming.payload
-        )
-        if not resolved:
-            raise NoRecipientsResolved(incoming.event_type)
-
-        async with self._uow_factory() as uow:
-            # Idempotent ingress: same key -> same notification, no new fan-out.
-            if incoming.idempotency_key:
+        # Idempotent ingress: same key -> same notification, no new fan-out.
+        # Checked first so a re-sent event is answered without calling Sentinel
+        # (which may be down) and without paying for another lookup.
+        if incoming.idempotency_key:
+            async with self._uow_factory() as uow:
                 existing_event = await uow.events.get_by_idempotency_key(
                     tenant_id, incoming.idempotency_key
                 )
@@ -86,6 +82,13 @@ class NotificationService:
                     if existing is not None:
                         return existing.id
 
+        resolved = await self._sentinel.resolve_recipients(
+            tenant_id, incoming.event_type, incoming.payload
+        )
+        if not resolved:
+            raise NoRecipientsResolved(incoming.event_type)
+
+        async with self._uow_factory() as uow:
             workflow, definition = await self._resolve_workflow(
                 uow, tenant_id, incoming.event_type
             )

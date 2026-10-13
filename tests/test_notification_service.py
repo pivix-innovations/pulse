@@ -192,3 +192,29 @@ async def test_database_recipient_client_falls_back_to_stored_recipient():
         tenant, "user.signup", {"recipients": [{"external_ref": "x"}]}
     )
     assert inline[0].external_ref == "x"
+
+
+async def test_a_resent_event_is_answered_without_calling_sentinel_again():
+    """Idempotency is checked first: a retry works even while the recipient directory is down."""
+    from services.ports.clients import SentinelUnavailable
+
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    healthy = NotificationService(
+        uow_factory=lambda: uow, sentinel=StaticSentinelClient([ResolvedRecipient(external_ref="u1", email="u1@example.com")]),
+        registry=WorkflowRegistry(), rendering=RenderingService(),
+    )
+    event = IncomingEvent(event_type="user.signup", source="t", payload={}, idempotency_key="same")
+    first = await healthy.process_event(tenant, event)
+
+    class Down:
+        async def resolve_recipients(self, *a):
+            raise SentinelUnavailable("down")
+
+    outage = NotificationService(
+        uow_factory=lambda: uow, sentinel=Down(), registry=WorkflowRegistry(), rendering=RenderingService(),
+    )
+    assert await outage.process_event(tenant, event) == first            # no Sentinel call needed
+    with pytest.raises(SentinelUnavailable):                              # a *new* event does need it
+        await outage.process_event(
+            tenant, IncomingEvent(event_type="user.signup", source="t", payload={}, idempotency_key="new"))

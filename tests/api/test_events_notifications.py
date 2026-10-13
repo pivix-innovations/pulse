@@ -78,3 +78,18 @@ async def test_unknown_notification_is_404(world):
         "/api/v1/notifications/00000000-0000-0000-0000-000000000009", headers=world.key_headers
     )
     assert res.status_code == 404
+
+
+async def test_an_unavailable_recipient_directory_is_a_503_to_retry_not_a_422(world):
+    from services.ports.clients import SentinelUnavailable
+
+    class Down:
+        async def resolve_recipients(self, *a):
+            raise SentinelUnavailable("down")
+
+    world.app.state.notification_service._sentinel = Down()
+    res = await world.client.post(
+        "/api/v1/events", json={**EVENT, "idempotency_key": "k-down"}, headers=world.key_headers
+    )
+    assert res.status_code == 503 and res.headers["Retry-After"] == "5"
+    assert "recipient directory" in res.json()["detail"]

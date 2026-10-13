@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from api.dependencies import get_notification_service, get_uow, require_tenant
 from api.v1.schemas import EventAccepted, EventIn, EventOut
 from domain.value_objects.ids import TenantId
+from services.ports.clients import SentinelUnavailable
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.notification_service import (
     IncomingEvent,
@@ -54,6 +55,15 @@ async def ingest_event(
                 scheduled_at=body.scheduled_at,
             ),
         )
+    except SentinelUnavailable as exc:
+        # We could not find out who to notify. Not "nobody": ask the producer to retry.
+        if limiter is not None:
+            await limiter.refund(tenant_id)
+        raise HTTPException(
+            status_code=503,
+            detail="The recipient directory is temporarily unavailable; retry shortly",
+            headers={"Retry-After": "5"},
+        ) from exc
     except (UnknownEventType, NoRecipientsResolved) as exc:
         if limiter is not None:  # a rejected event shouldn't eat the tenant's quota
             await limiter.refund(tenant_id)
