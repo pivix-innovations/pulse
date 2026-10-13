@@ -14,3 +14,4 @@ wheels/
 # Makefile runtime state
 .run/
 logs/
+.DS_Store
