@@ -5,6 +5,7 @@ from typing import Protocol
 from services.ports.repositories import (
     ApiKeyRepository,
     DeadLetterRepository,
+    DigestRepository,
     DeliveryAttemptRepository,
     DeviceTokenRepository,
     EventRepository,
@@ -43,6 +44,7 @@ class UnitOfWork(Protocol):
     outbox: OutboxRepository
     inbox: InboxRepository
     step_runs: StepRunRepository
+    digests: DigestRepository
     device_tokens: DeviceTokenRepository
     dead_letters: DeadLetterRepository
     templates: TemplateRepository

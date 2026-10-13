@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from repositories.dead_letter_repository import PostgresDeadLetterRepository
 from repositories.delivery_repository import PostgresDeliveryAttemptRepository
 from repositories.device_token_repository import PostgresDeviceTokenRepository
+from repositories.digest_repository import PostgresDigestRepository
 from repositories.event_repository import PostgresEventRepository
 from repositories.identity_repository import (
     PostgresApiKeyRepository,
@@ -51,6 +52,7 @@ class SqlAlchemyUnitOfWork:
         self.outbox = PostgresOutboxRepository(self._session)
         self.inbox = PostgresInboxRepository(self._session)
         self.step_runs = PostgresStepRunRepository(self._session)
+        self.digests = PostgresDigestRepository(self._session)
         self.device_tokens = PostgresDeviceTokenRepository(self._session)
         self.dead_letters = PostgresDeadLetterRepository(self._session)
         self.templates = PostgresTemplateRepository(self._session)

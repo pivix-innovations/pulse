@@ -1,5 +1,6 @@
 from database.models.base import Base
 from database.models.dead_letter import DeadLetterModel
+from database.models.digest import DigestBatchModel, DigestItemModel
 from database.models.delivery import DeliveryAttemptModel
 from database.models.device import DeviceTokenModel
 from database.models.event import EventModel
@@ -26,6 +27,8 @@ __all__ = [
     "Base",
     "DeadLetterModel",
     "DeliveryAttemptModel",
+    "DigestBatchModel",
+    "DigestItemModel",
     "DeviceTokenModel",
     "EventModel",
     "InboxMessageModel",

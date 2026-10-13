@@ -79,6 +79,16 @@ class DeviceTokenId(_Id):
 
 
 @dataclass(frozen=True, slots=True)
+class DigestBatchId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DigestItemId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class StepRunId(_Id):
     pass
 

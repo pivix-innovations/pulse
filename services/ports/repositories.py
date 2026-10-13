@@ -7,6 +7,7 @@ from typing import Protocol, Sequence
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
+from domain.entities.digest import DigestBatch, DigestItem
 from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.inbox import InboxMessage
@@ -25,6 +26,7 @@ from domain.value_objects.ids import (
     DeliveryAttemptId,
     ApiKeyId,
     DeadLetterId,
+    DigestBatchId,
     EventId,
     InboxMessageId,
     MembershipId,
@@ -448,3 +450,42 @@ class StepRunRepository(Protocol):
     async def save(self, run: StepRun) -> None: ...
 
     async def cancel_open(self, notification_id: NotificationId, reason: str, at: datetime) -> int: ...
+
+
+class DigestRepository(Protocol):
+    """Persistence port for digest batches and their buffered events."""
+
+    async def add_item(
+        self,
+        *,
+        tenant_id: TenantId,
+        workflow_id: WorkflowId,
+        recipient_id: RecipientId,
+        digest_key: str,
+        notification_id: NotificationId,
+        payload: dict,
+        now: datetime,
+        window_seconds: int,
+        max_items: int,
+    ) -> DigestBatch:
+        """Buffer one event: join the recipient's open batch or open one (this event anchors it).
+        A batch that reaches `max_items` becomes due immediately."""
+        ...
+
+    async def claim_due(self, now: datetime, limit: int) -> list[DigestBatch]:
+        """Lock open batches whose window has closed (skip rows other schedulers hold)."""
+        ...
+
+    async def list_items(self, batch_id: DigestBatchId) -> list[DigestItem]:
+        """Oldest first."""
+        ...
+
+    async def mark_flushed(self, batch: DigestBatch, at: datetime) -> None: ...
+
+    async def has_open_for_notification(self, notification_id: NotificationId) -> bool:
+        """Is this notification's event still sitting in an unsent digest?"""
+        ...
+
+    async def get_for_notification(
+        self, tenant_id: TenantId, notification_id: NotificationId
+    ) -> DigestBatch | None: ...

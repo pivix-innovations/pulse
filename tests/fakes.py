@@ -12,6 +12,7 @@ from domain.entities.device import DeviceToken
 from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
+from domain.entities.digest import DigestBatch, DigestItem, DigestStatus
 from domain.entities.inbox import InboxMessage
 from domain.entities.step_run import StepRun, StepRunStatus
 from domain.entities.outbox import OutboxEntry
@@ -25,6 +26,8 @@ from domain.value_objects.ids import (
     ApiKeyId,
     DeadLetterId,
     DeliveryAttemptId,
+    DigestBatchId,
+    DigestItemId,
     EventId,
     MembershipId,
     NotificationId,
@@ -496,6 +499,58 @@ class InMemoryStepRunRepository:
         return n
 
 
+class InMemoryDigestRepository:
+    def __init__(self) -> None:
+        self.batches: dict[str, DigestBatch] = {}
+        self.items: list[DigestItem] = []
+
+    async def add_item(self, *, tenant_id, workflow_id, recipient_id, digest_key, notification_id,
+                       payload, now, window_seconds, max_items):
+        batch = next(
+            (b for b in self.batches.values()
+             if b.status is DigestStatus.OPEN and b.workflow_id == workflow_id
+             and b.recipient_id == recipient_id and b.digest_key == digest_key),
+            None,
+        )
+        if batch is None:
+            batch = DigestBatch(
+                id=DigestBatchId.new(), tenant_id=tenant_id, workflow_id=workflow_id, recipient_id=recipient_id,
+                digest_key=digest_key, anchor_notification_id=notification_id,
+                flush_at=now + timedelta(seconds=window_seconds), created_at=now,
+            )
+            self.batches[str(batch.id)] = batch
+        self.items.append(DigestItem(
+            id=DigestItemId.new(), tenant_id=tenant_id, batch_id=batch.id,
+            notification_id=notification_id, payload=payload, created_at=now + timedelta(microseconds=len(self.items)),
+        ))
+        batch.item_count += 1
+        if batch.item_count >= max_items:
+            batch.flush_at = min(batch.flush_at, now)
+        return batch
+
+    async def claim_due(self, now, limit):
+        due = [b for b in self.batches.values() if b.status is DigestStatus.OPEN and b.flush_at <= now]
+        return sorted(due, key=lambda b: b.flush_at)[:limit]
+
+    async def list_items(self, batch_id):
+        return sorted((i for i in self.items if i.batch_id == batch_id), key=lambda i: i.created_at)
+
+    async def mark_flushed(self, batch, at):
+        batch.status, batch.flushed_at = DigestStatus.FLUSHED, at
+
+    async def has_open_for_notification(self, notification_id):
+        return any(
+            i.notification_id == notification_id and self.batches[str(i.batch_id)].status is DigestStatus.OPEN
+            for i in self.items
+        )
+
+    async def get_for_notification(self, tenant_id, notification_id):
+        for i in self.items:
+            if i.notification_id == notification_id and i.tenant_id == tenant_id:
+                return self.batches[str(i.batch_id)]
+        return None
+
+
 class InMemoryDeviceTokenRepository:
     def __init__(self) -> None:
         self.items: dict[str, DeviceToken] = {}
@@ -860,6 +915,7 @@ class InMemoryUnitOfWork:
         self.outbox = InMemoryOutboxRepository()
         self.inbox = InMemoryInboxRepository()
         self.step_runs = InMemoryStepRunRepository()
+        self.digests = InMemoryDigestRepository()
         self.device_tokens = InMemoryDeviceTokenRepository()
         self.dead_letters = InMemoryDeadLetterRepository()
         self.templates = InMemoryTemplateRepository()
