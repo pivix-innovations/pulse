@@ -384,7 +384,8 @@ class InMemoryDeadLetterRepository:
     async def list_for_tenant(
         self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0
     ) -> tuple[list[DeadLetter], int]:
-        matches = [d for d in self.items if d.tenant_id == tenant_id]
+        # Newest first, like the database (insertion order is oldest first).
+        matches = [d for d in reversed(self.items) if d.tenant_id == tenant_id]
         return matches[offset : offset + limit], len(matches)
 
 
@@ -462,26 +463,34 @@ class InMemoryProviderCallRepository:
     async def stats(self, tenant_id, since):
         from services.ports.repositories import ProviderCallStats
 
+        window = sorted(
+            (c for c in self.items if c.tenant_id == tenant_id and c.created_at >= since),
+            key=lambda c: c.created_at,
+        )
         out: dict = {}
-        for c in sorted(self.items, key=lambda c: c.created_at):
-            if c.tenant_id != tenant_id or c.created_at < since:
-                continue
+        latencies: dict = {}
+        for c in window:
             s = out.setdefault(c.provider_id, ProviderCallStats())
             if c.outcome == "recipient_error":
-                continue
+                continue  # the provider worked; the destination didn't
             s.calls += 1
             if c.outcome == "provider_error":
                 s.failures += 1
                 s.last_failure_at, s.last_error = c.created_at, c.error
             else:
                 s.last_success_at = c.created_at
+                latencies.setdefault(c.provider_id, []).append(c.latency_ms)
             s.recent.insert(0, c.outcome)
         for pid, s in out.items():
             s.recent = s.recent[:5]
-            lat = sorted(c.latency_ms for c in self.items if c.provider_id == pid and c.outcome == "ok")
+            lat = sorted(latencies.get(pid, []))
             if lat:
                 s.avg_latency_ms = sum(lat) / len(lat)
-                s.p95_latency_ms = float(lat[min(len(lat) - 1, int(len(lat) * 0.95))])
+                # Continuous percentile, as Postgres' percentile_cont does.
+                pos = 0.95 * (len(lat) - 1)
+                lo = int(pos)
+                hi = min(lo + 1, len(lat) - 1)
+                s.p95_latency_ms = lat[lo] + (lat[hi] - lat[lo]) * (pos - lo)
         return out
 
     async def prune(self, before) -> int:

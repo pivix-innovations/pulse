@@ -30,6 +30,8 @@ class PostgresProviderCallRepository:
                 outcome=c.outcome,
                 latency_ms=c.latency_ms,
                 error=c.error,
+                # Normally the database stamps the time; an explicit one is honoured.
+                **({"created_at": c.created_at} if c.created_at else {}),
             )
             for c in calls
         )
