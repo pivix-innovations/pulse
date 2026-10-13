@@ -112,7 +112,7 @@ class DeliveryService:
             await uow.delivery_attempts.update(attempt)
             await uow.commit()
             try:
-                used, result = await self._send_through_chain(chain, message)
+                used, result, failed_over = await self._send_through_chain(chain, message)
             except ChainFailed as exc:
                 await self._guard.release(attempt.idempotency_key)
                 if exc.invalid_destinations:
@@ -125,6 +125,9 @@ class DeliveryService:
             if result.invalid_destinations:
                 await self._prune_destinations(uow, attempt, result.invalid_destinations)
             provider, provider_id = used.provider, used.provider_id
+            if failed_over:
+                # Keep the trail: which providers failed before this one sent.
+                attempt.last_error = f"Failed over to {used.label} after: " + "; ".join(failed_over)
 
             attempt.mark_sent(
                 datetime.now(timezone.utc),
@@ -149,7 +152,7 @@ class DeliveryService:
 
     async def _send_through_chain(
         self, chain: list[ResolvedProviderLike], message: OutboundMessage
-    ) -> tuple[ResolvedProviderLike, SendResult]:
+    ) -> tuple[ResolvedProviderLike, SendResult, list[str]]:
         failures: list[str] = []
         retryable = False
         invalid: list[str] = []
@@ -158,7 +161,7 @@ class DeliveryService:
                 result = await asyncio.wait_for(
                     resolved.provider.send(message), self._retry.provider_timeout_seconds
                 )
-                return resolved, result
+                return resolved, result, failures
             except (asyncio.TimeoutError, TimeoutError):
                 error = f"timed out after {self._retry.provider_timeout_seconds:g}s"
                 exc_retryable, failover = True, True

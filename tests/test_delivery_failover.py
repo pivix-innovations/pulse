@@ -123,3 +123,15 @@ async def test_stale_tokens_reported_on_success_are_pruned_too():
     )
     assert await chain_service(uow, [Partial(channel=ChannelType.PUSH)]).deliver(tenant, attempt.id) == "sent"
     assert [t.token for t in uow.device_tokens.items.values()] == ["live-1"]
+
+
+async def test_failover_trail_is_kept_on_the_attempt():
+    result, attempt, *_ = await deliver([FakeProvider(fail=True), FakeProvider()])
+    assert result == "sent"
+    assert attempt.last_error.startswith("Failed over to p1 after: p0:")
+    assert "provider exploded" in attempt.last_error
+
+
+async def test_no_trail_when_the_first_provider_succeeds():
+    _, attempt, *_ = await deliver([FakeProvider(), FakeProvider()])
+    assert attempt.last_error is None
