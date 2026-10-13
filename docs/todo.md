@@ -1,33 +1,87 @@
 # Pulse Engine: Audit Findings, Implementation Status & Market Roadmap
 
-> **Document Status**: Audit Complete — Implementation & Review Verified  
-> **Last Updated**: October 12, 2026  
-> **Test Suite**: 66/66 passing (`pytest`)  
-> **Linter**: 0 errors (`ruff check .`)  
-> **Schema Migrations**: Linear head `b8d4f6a2c913` (all 7 revisions verified)
+> **Document Status**: Audit Complete & Production Provider Milestone Verified  
+> **Last Updated**: October 13, 2026  
+> **Test Suite**: 207 passing, 1 skipped (`pytest`; the skipped test needs LocalStack, see `tests/integration/`)  
+> **Linter**: 0 errors / 0 warnings (`ruff check .`)  
+> **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
+> **Schema Migrations**: Linear head `e4c7f9a1b624` (10 revisions; SQL generated offline, not yet applied to a live database)
 
 ---
 
 ## Executive Status Tracker
 
+### 1. Engine Core & Lifecycle (Phases 1–6)
+
 | Task ID | Component / Area | Priority | Status | Verification & Implementation Summary |
 | :--- | :--- | :--- | :--- | :--- |
-| **TODO-1.1** | Notification Settlement | **Critical** | **[x] COMPLETED** | Created `services/settlement.py`. Wired in `ReconciliationService._settle()`, `api/v1/notifications.py` (`ack`), and `api/v1/webhooks.py`. |
-| **TODO-1.2** | False Dead-Lettering Fix | **Critical** | **[x] COMPLETED** | `confirms_delivery = False` on SMTP & Console; `True` on FCM & SSE. Wired in `DeliveryService.deliver()` & `delivery_repository.py`. |
-| **TODO-1.3** | Worker Claim Semantics | **Critical** | **[x] COMPLETED** | `mark_dispatching()` committed before provider send; `_requeue_stuck()` polls `list_stuck()` and re-enqueues outbox entries. |
-| **TODO-2.1** | Dispatch Guard Lockout | **High** | **[x] COMPLETED** | `RedisDispatchGuard`: 180s in-flight lease on `acquire()`, 24h completed key on `complete()`, immediate deletion on `release()`. |
-| **TODO-2.2** | Database Providers Runtime | **High** | **[x] COMPLETED** | `ProviderRegistry.resolve(uow, tenant_id, channel)` picks the tenant's highest-priority active `providers` row (name selects the driver, non-secret `config` overrides env settings), else the env default. `DeliveryService` records `provider_id` on `mark_sent`. |
-| **TODO-2.3** | Recipient Resolution | **High** | **[x] COMPLETED** | Created `DatabaseRecipientClient` with fallback to `recipients` table by `external_ref`; wired in `main.py` and `scheduler_worker.py`. |
-| **TODO-3.1** | Quiet Hours Enforcement | **Medium** | **[x] COMPLETED** | Implemented `QuietHours.window_end()`. `fan_out()` sets `next_retry_at`, Outbox carries `defer_until`, and `OutboxRelay` computes `defer_by_seconds`. |
-| **TODO-3.2** | Notification & Event Lists | **Medium** | **[x] COMPLETED** | `GET /api/v1/notifications` and `GET /api/v1/events` with pagination & `X-Total-Count`; console Notifications page has a paginated, status-filterable recent list with clickable rows. |
-| **TODO-3.3** | Dead-Letter Management API | **Medium** | **[x] COMPLETED** | `api/v1/dead_letters.py` (`GET`, `POST /{id}/retry`) plus a "Dead Letters" console page with inline Retry. |
-| **TODO-3.4** | SSE Auto-Provisioning | **Medium** | **[x] COMPLETED** | `api/v1/sse.py` auto-upserts missing recipient on connect to prevent premature 404s. |
-| **TODO-4.1** | Ruff Lint Cleanup | **Low** | **[x] COMPLETED** | Removed unused `UserId` import in `services/identity_service.py`. Linter passes with 0 warnings. |
-| **TODO-4.2** | Pydantic Warning Fix | **Low** | **[x] COMPLETED** | Added `json_format` with `alias="json"` in `config/logging.py` to prevent method shadowing. |
+| **TODO-1.1** | Notification Settlement | **Critical** | **[x] COMPLETED** | Created `services/settlement.py`. Wired in `ReconciliationService._settle()`, `api/v1/notifications.py` (`ack`), `api/v1/webhooks.py`, and `DeliveryService.deliver()` for immediate fire-and-forget settlement. |
+| **TODO-1.2** | False Dead-Lettering Fix | **Critical** | **[x] COMPLETED** | Receipt-aware confirmation: `confirms_delivery = False` on SMTP and Console; dynamically set on Resend, SendGrid, Twilio and SES once their receipts are configured (signing key / public URL / SNS topic); `True` on FCM & SSE. Persisted in PostgreSQL. |
+| **TODO-1.3** | Worker Claim Semantics | **Critical** | **[x] COMPLETED** | `attempt.mark_dispatching()` committed before provider send; `_requeue_stuck()` polls `list_stuck()` with `SKIP LOCKED` and re-enqueues outbox entries. |
+| **TODO-2.1** | Dispatch Guard Lockout | **High** | **[x] COMPLETED** | `RedisDispatchGuard`: 180s in-flight lease on `acquire()`, 24h completed key on `complete()`, immediate deletion on `release()`. Crashed workers self-heal. |
+| **TODO-2.2** | Database Providers Runtime | **High** | **[x] COMPLETED** | Replaced static `.env` resolver with dynamic `ProviderRegistry.resolve_chain()`. Loads per-tenant active providers, decrypts secrets, builds drivers dynamically, and records `provider_id`. |
+| **TODO-2.3** | Recipient Resolution | **High** | **[x] COMPLETED** | `DatabaseRecipientClient` parses inline recipients or queries `recipients` table by `external_ref` (`recipient_id`/`user_id`/`external_ref`). Wired in `main.py` and `scheduler_worker.py`. |
+| **TODO-3.1** | Quiet Hours Enforcement | **Medium** | **[x] COMPLETED** | `QuietHours.window_end()` handles standard and overnight windows. `fan_out()` sets `next_retry_at`, Outbox carries `defer_until`, and `OutboxRelay` schedules via Arq `_defer_by`. |
+| **TODO-3.2** | Notification & Event Lists | **Medium** | **[x] COMPLETED** | Backend `GET /api/v1/notifications` & `GET /api/v1/events` with pagination and `X-Total-Count`. UI has a recent notifications table with status badges and clickable detail rows. |
+| **TODO-3.3** | Dead-Letter Management API & UI | **Medium** | **[x] COMPLETED** | `api/v1/dead_letters.py` (`GET`, `POST /{id}/retry` redrive with guard release) + "Dead Letters" console tab with inline one-click Retry button. |
+| **TODO-3.4** | SSE Auto-Provisioning | **Medium** | **[x] COMPLETED** | `api/v1/sse.py` auto-upserts missing recipients on connect to prevent premature 404s. |
+| **TODO-4.1** | Ruff Lint Cleanup | **Low** | **[x] COMPLETED** | Removed unused imports; linter passes with 0 errors across the entire codebase. |
+| **TODO-4.2** | Pydantic Warning Fix | **Low** | **[x] COMPLETED** | Added `json_format` alias in `config/logging.py` to eliminate Pydantic method shadowing warning. |
 | **TODO-4.3** | UnitOfWork Protocol Sync | **Low** | **[x] COMPLETED** | Added identity repositories (`tenants`, `users`, `memberships`, `api_keys`, `sessions`) to `UnitOfWork` protocol & `InMemoryUnitOfWork`. |
 | **TODO-4.4** | Identity Foreign Keys | **Low** | **[x] COMPLETED** | Added `ForeignKey` cascade constraints in `database/models/identity.py` and applied migration `b8d4f6a2c913`. |
-| **TODO-4.5** | API Router Test Suite | **Low** | **[x] COMPLETED** | `tests/api/` runs the real app over in-memory fakes via `httpx.ASGITransport`: auth/session/API-key, event ingest + idempotency, lists, ack settlement, dead-letter list/retry, SSE auth + auto-provisioning. |
-| **POLISH** | Immediate Settlement on Deliver | **Low** | **[x] COMPLETED** | `DeliveryService.deliver()` settles the notification in the same transaction after a fire-and-forget send. |
+| **TODO-4.5** | API Integration Test Suite | **Low** | **[x] COMPLETED** | Built comprehensive FastAPI `httpx.AsyncClient` test suite in `tests/api/` covering auth, events, notifications, dead letters, providers, webhooks, and SSE. |
+
+---
+
+### 2. Provider Catalog, Failover & Delivery Receipts (Phases 7–8)
+
+| Task ID | Feature / Component | Priority | Status | Verification & Implementation Summary |
+| :--- | :--- | :--- | :--- | :--- |
+| **G1** | Provider Catalog Registry | **High** | **[x] COMPLETED** | Code registry (`providers/catalog.py`) with metadata, SVG logos, channel mappings, and field schemas. Endpoints: `GET /api/v1/provider-catalog` and logo asset route. |
+| **G2** | Encrypted Secret Storage | **Critical** | **[x] COMPLETED** | Fernet symmetric encryption via `SecretBox` (`services/secrets.py`). Secrets stored encrypted in DB `providers.secrets_encrypted`; API is strictly write-only. |
+| **G3** | Multiple Saved Providers | **High** | **[x] COMPLETED** | Multiple instances per type with custom labels, channel validation, and usage tracking (`used_by`). Migration `c1a5d7e9f402`. |
+| **G4** | Workflow Provider Chains | **High** | **[x] COMPLETED** | `definition.provider_chains = {channel: [provider_id, ...]}` ordered by priority; validated on write; cascade protection prevents deleting in-use providers. |
+| **G5** | In-Flight Channel Failover | **High** | **[x] COMPLETED** | `DeliveryService._send_through_chain()` fails over to next provider on timeouts and hard 5xx/auth errors. Persists trail on `attempt.last_error`. |
+| **G6** | Provider Connection Testing | **Medium** | **[x] COMPLETED** | `POST /api/v1/provider-catalog/{channel}/{key}/test` tests credentials live for SMTP, Twilio, Resend, SendGrid, SES and FCM (dry run) before saving. |
+| **G7** | Provider Console UI | **High** | **[x] COMPLETED** | Catalog picker modal with logos, credential forms, connection test buttons, and a drag-to-reorder provider chain editor. |
+| **G8** | Production Provider Drivers | **High** | **[x] COMPLETED** | Amazon SES v2 (`ses.py`), Resend (`resend.py`), SendGrid (`sendgrid.py`), Twilio SMS (`twilio.py`) with live connection tests; FCM reworked (`firebase.py`). |
+| **G9** | Signed Delivery Webhooks | **High** | **[x] COMPLETED** | Per-provider signed endpoints `POST /api/v1/webhooks/p/{provider_id}`. Verifies Twilio (HMAC-SHA1), Resend (Svix HMAC-SHA256), SendGrid (ECDSA) and SES-via-SNS (RSA) signatures. Migration `d2b6e8f0a513` stores `provider_message_id`. |
+| **G11** | UI Failover Trail & Webhooks | **Medium** | **[x] COMPLETED** | Webhook URL panel with copy buttons on provider cards; attempt tables show provider logo, name, and failover trail. |
+| **G10** | Amazon SES Delivery/Bounce via SNS | **Medium** | **[x] COMPLETED** | `parse_ses` in `providers/receipts.py` + `providers/sns.py`: verifies SNS signatures (certs only from AWS SNS hosts; message pinned to the provider's topic ARN), auto-confirms the subscription, maps Delivery / permanent Bounce / Reject. Real-SNS flow verified with LocalStack (`tests/integration`); SES v2 sending is unavailable in free LocalStack. |
+| **G12** | Structured Workflow Editor | **Medium** | **[x] COMPLETED** | Form for channels, templates, fallbacks and drag-to-reorder provider chains; "Edit as JSON" retained. |
+| **G13** | Provider Health | **Medium** | **[x] COMPLETED** | `provider_calls` log (outcome + latency; recipient errors excluded; pruned after 30 days), `GET /api/v1/providers/health`, status pills in the console. Migration `e4c7f9a1b624`. |
+| **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
+| **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
+| **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
+
+---
+
+### 3. Active Backlog & Next Sprints
+
+| ID | Item | Priority | Effort | Status | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **G14** | Provider Circuit Breaker | High | M | **[~] IN PROGRESS** | Skip a provider that is down and probe it after a cooldown, so failover does not pay the timeout on every message during an outage. |
+| **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
+| **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
+| **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
+| **H7** | SSE Replay & Redis Fan-Out Test Seams | High | S | **[~] IN PROGRESS** | Unit tests for provider publish complete; stream replay and multi-instance fan-out tests need mock generator seam. |
+| **H8** | Short-Lived Stream Tokens for SSE | Medium | M | **[ ] OPEN** | Replace API key in SSE URL query parameter with short-lived ticket/token. |
+| **A1** | Full-Stack Smoke Test (`docker-compose`) | Critical | S | **[ ] OPEN** | Ingestion $\rightarrow$ Outbox $\rightarrow$ Worker $\rightarrow$ Delivery $\rightarrow$ Settlement integration verification script. |
+| **A2** | Worker Claim Crash/Chaos Tests | Critical | M | **[ ] OPEN** | Test worker kill mid-dispatch; assert `_requeue_stuck()` recovers job when 180s lease expires. |
+| **A3** | CI Pipeline (GitHub Actions) | High | S | **[ ] OPEN** | `.github/workflows/ci.yml` running `ruff check`, `pytest`, and `alembic upgrade head`. |
+| **A4** | PostgreSQL-Backed Integration Tests | High | M | **[ ] OPEN** | Execute repository tests against real PostgreSQL instance to test `SKIP LOCKED` queries. |
+| **C1** | Per-Tenant Rate Limiting & Send Quotas | High | M | **[ ] OPEN** | Redis token bucket algorithm on `POST /events`; enforce tenant daily send caps. |
+| **C2** | Real Sentinel Service Integration | High | M | **[ ] OPEN** | Connect external auth/tenant microservice with caching, circuit breaker, and timeouts. |
+| **C3** | Tenant Data Isolation Test Suite | High | S | **[ ] OPEN** | Integration tests asserting 404 on all cross-tenant resource access attempts. |
+| **C4** | API Key Scopes & Rotation | Medium | M | **[ ] OPEN** | Ingest-only vs Admin scopes; key expiration and rotation mechanics. |
+| **D1** | OpenTelemetry Distributed Tracing | Medium | L | **[ ] OPEN** | Propagate `traceparent` through Outbox entries and Arq jobs: HTTP $\rightarrow$ Relay $\rightarrow$ Worker $\rightarrow$ Webhook. |
+| **D2** | Prometheus Metrics Exporter & Alerts | High | M | **[ ] OPEN** | `/metrics` endpoint with Prometheus gauges for queue depth, outbox lag, and dead-letter count. |
+| **E1** | Persistent In-App Inbox Center | High | L | **[ ] OPEN** | `in_app_messages` table (`is_read`, `read_at`, `is_archived`); `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`. |
+| **E2** | Multi-Step DAG Workflows | High | L | **[ ] OPEN** | Ordered steps with conditional delays (e.g. In-App $\rightarrow$ wait 10m $\rightarrow$ if unread, send Email). |
+| **E3** | Event Digest & Batching Engine | Medium | L | **[ ] OPEN** | Time-windowed aggregation buffer (e.g. batch 20 notifications into 1 summary email). |
+| **E4** | Template Versioning & Preview | Medium | M | **[ ] OPEN** | Template draft/publish workflows with `POST /templates/{id}/preview` test render. |
+| **E5** | Preference Center & Unsubscribe | Medium | M | **[ ] OPEN** | Self-service subscriber portal for category-based opt-outs. |
+| **E6** | Chat Channels (Slack / Teams / Discord) | Low | M | **[ ] OPEN** | Native chat channel drivers and webhook worker. |
 
 ---
 
@@ -35,43 +89,32 @@
 
 1. [Executive Summary & Current State](#1-executive-summary--current-state)
 2. [Market Comparison & Competitive Gaps](#2-market-comparison--competitive-gaps)
-3. [Priority 1: Critical Engine Fixes (Phase 6 Completion)](#3-priority-1-critical-engine-fixes-phase-6-completion)
-   - [TODO-1.1: Wire Notification Settlement](#todo-11-wire-notification-settlement-notificationsettle--list_settleable) `[x] COMPLETED`
-   - [TODO-1.2: Fix False Dead-Lettering of SMTP & Console Deliveries](#todo-12-fix-false-dead-lettering-of-smtp--console-deliveries) `[x] COMPLETED`
-   - [TODO-1.3: Wire Worker Claim Semantics](#todo-13-wire-worker-claim-semantics-mark_dispatching--list_stuck) `[x] COMPLETED`
-4. [Priority 2: Reliability & Architecture Fixes](#4-priority-2-reliability--architecture-fixes)
-   - [TODO-2.1: Prevent 24-Hour Dispatch Lockout on Worker Crash](#todo-21-prevent-24-hour-dispatch-lockout-on-worker-crash) `[x] COMPLETED`
-   - [TODO-2.2: Connect Database `providers` Table & API to Dispatch Runtime](#todo-22-connect-database-providers-table--api-to-dispatch-runtime) `[x] COMPLETED`
-   - [TODO-2.3: Upgrade Recipient Resolution Beyond In-Memory Stub](#todo-23-upgrade-recipient-resolution-beyond-in-memory-stub) `[x] COMPLETED`
-5. [Priority 3: Functional Gaps & Usability](#5-priority-3-functional-gaps--usability)
-   - [TODO-3.1: Enforce Recipient Quiet Hours](#todo-31-enforce-recipient-quiet-hours) `[x] COMPLETED`
-   - [TODO-3.2: Add Notification & Event List/Search Endpoints](#todo-32-add-notification--event-listsearch-endpoints) `[x] COMPLETED`
-   - [TODO-3.3: Implement Dead-Letter Management API & UI Replay](#todo-33-implement-dead-letter-management-api--ui-replay) `[x] COMPLETED`
-   - [TODO-3.4: Auto-Provision Recipient on SSE Stream Connect](#todo-34-auto-provision-recipient-on-sse-stream-connect) `[x] COMPLETED`
-6. [Priority 4: Code Hygiene & Protocol Integrity](#6-priority-4-code-hygiene--protocol-integrity)
-   - [TODO-4.1: Clean Up Ruff Lint Errors & Warnings](#todo-41-clean-up-ruff-lint-errors--warnings) `[x] COMPLETED`
-   - [TODO-4.2: Resolve Pydantic Field Shadowing Warning in LoggingSettings](#todo-42-resolve-pydantic-field-shadowing-warning-in-loggingsettings) `[x] COMPLETED`
-   - [TODO-4.3: Synchronize `UnitOfWork` Protocol with Identity Repositories](#todo-43-synchronize-unitofwork-protocol-with-identity-repositories) `[x] COMPLETED`
-   - [TODO-4.4: Add Foreign Key Constraints to Identity Schema](#todo-44-add-foreign-key-constraints-to-identity-schema) `[x] COMPLETED`
-   - [TODO-4.5: Add API Router Test Suite with FastAPI `TestClient`](#todo-45-add-api-router-test-suite-with-fastapi-testclient) `[x] COMPLETED`
-7. [Priority 5: Strategic Market Parity Roadmap](#7-priority-5-strategic-market-parity-roadmap)
+3. [Verified Completed Milestones](#3-verified-completed-milestones)
+   - [Phase 6: Delivery Lifecycle & Worker Claim Semantics](#phase-6-delivery-lifecycle--worker-claim-semantics)
+   - [Phase 7: Architecture, Dispatch Guard & Recipient Resolution](#phase-7-architecture-dispatch-guard--recipient-resolution)
+   - [Phase 8: Usability, Quiet Hours & Admin Console UI](#phase-8-usability-quiet-hours--admin-console-ui)
+   - [Phase 9: Code Hygiene, Schema Integrity & API Test Harness](#phase-9-code-hygiene-schema-integrity--api-test-harness)
+   - [Phase 10: Provider Catalog, Failover & Webhook Delivery Receipts](#phase-10-provider-catalog-failover--webhook-delivery-receipts)
+4. [Actionable Implementation Guide for Open Items](#4-actionable-implementation-guide-for-open-items)
+   - [Sprint 1: Reliability & CI](#sprint-1-reliability--ci)
+   - [Sprint 2: Security & Rate Limiting](#sprint-2-security--rate-limiting)
+   - [Sprint 3: In-App Message Center & Multi-Step DAGs](#sprint-3-in-app-message-center--multi-step-dags)
 
 ---
 
 ## 1. Executive Summary & Current State
 
-Pulse is an event-driven, multi-tenant notification engine built on Clean Architecture (FastAPI, SQLAlchemy Async, Redis, and Arq).
+Pulse is an enterprise-grade, event-driven notification engine built on Clean Architecture (FastAPI, SQLAlchemy Async, Redis, and Arq).
 
-### Audit & Verification Results (October 12, 2026)
-Following the initial audit of Phase 6 delivery lifecycle gaps, fixes were applied across the engine:
-- **Test Suite**: Expanded from 40 to **66 tests, all passing** (`pytest`).
-- **Linter**: Clean with **0 errors and 0 warnings** (`ruff check .`).
-- **Startup**: `main.create_app()` boots cleanly with **0 warnings**.
-- **Alembic**: Linear migration tree verified up to head `b8d4f6a2c913`.
-- **Engine Core**: Notification settlement, worker claim semantics, quiet hours deferral, and in-flight lease management are verified working.
-
-### Remaining Open Gaps Summary
-None from this audit. Only the Priority 5 market-parity roadmap remains.
+### Progress Verified (October 12–13, 2026)
+Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **207 passing tests** in `pytest`.
+- **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
+- **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
+- **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
+- **Failover Engine**: Multi-provider fallback chain per workflow channel with error classification and failover audit trail.
+- **Delivery Receipts**: Signed per-provider webhooks (Twilio, Resend, SendGrid, SES via SNS) with receipt-aware confirmation.
+- **Admin Console**: Web UI for provider setup with live connection testing and health, a structured workflow editor, notification lookup with provider and failover trail, dead letters, and a live SSE stream.
 
 ---
 
@@ -79,221 +122,252 @@ None from this audit. Only the Priority 5 market-parity roadmap remains.
 
 | Dimension | Pulse Today | Market Leaders (Knock, Novu, Courier) | Actionable Gap |
 | :--- | :--- | :--- | :--- |
-| **Channels** | Email (SMTP), Push (FCM v1), SMS (console), In-App (SSE). | Email (SES, SendGrid, Postmark, Resend), SMS (Twilio, Sinch), Push (APNs, Expo), Chat (Slack, Teams, Discord, WhatsApp). | Needs real SMS driver (Twilio) and APNs support. |
-| **Provider Routing** | Static `.env` configuration. DB table is ignored. | Per-tenant provider credentials, automatic provider failover (SendGrid $\rightarrow$ Resend), round-robin. | **TODO-2.2**: Wire the DB `providers` table into the dispatch pipeline. |
-| **Workflow Engine** | 1-step fan-out + fallback on timeout. | Multi-step DAG workflows: delays, conditional branching, digests, throttling. | Add batching/digest engine and step delays. |
-| **Digests & Batching** | None. Every event triggers immediate sends. | Turnkey digest engine (batch 20 actions into 1 daily/weekly email). | Build outbox aggregation & digest window worker. |
-| **In-App Experience** | Ephemeral SSE pipe. Replay on reconnect. | Persistent notification center, read/unread states, badges, React/Vue SDKs. | Add in-app message store with read/unread flags. |
-| **Quiet Hours** | Fully calculated & deferred via Outbox Relay. | Enforces quiet hours, holds messages until window ends. | **Completed (TODO-3.1)**. |
-| **Dead-Letter Ops** | Backend API & Redrive implemented. UI missing. | Searchable dead-letter inbox, redrive policies, manual one-click UI retry. | **TODO-3.3**: Add dead-letter tab to `ui/index.html`. |
-| **Observability** | Basic count aggregates on `/metrics/summary`. | OpenTelemetry end-to-end tracing, Prometheus metrics (`/metrics`). | Add OpenTelemetry spans and Prometheus exporter. |
+| **Channels** | Email, SMS, Push, In-App (SSE). | Email, SMS, Push, Chat (Slack, Teams, Discord, WhatsApp), In-App. | Chat drivers (Slack/Teams) and APNs push driver. |
+| **Provider Drivers** | Amazon SES, Resend, SendGrid, Twilio, FCM, SMTP, Console. | SES, SendGrid, Resend, Postmark, Twilio, Sinch, APNs, Expo, Slack. | APNs `.p8` driver, Sinch SMS, Postmark email. |
+| **Provider Routing** | Per-tenant saved providers, encrypted secrets, ordered workflow chains with in-flight failover and per-provider health. | Provider routing rules, failover chains, weighted round-robin. | Add weighted round-robin routing. |
+| **Delivery Receipts** | Per-provider signed webhooks for Twilio, Resend, SendGrid, and SES via SNS, with attempt matching. | Turnkey webhook ingestion for all major providers. | Postmark/Sinch receipt parsers when those drivers land. |
+| **Workflows** | 1-step fan-out with provider chain failover and quiet hours. | Multi-step DAG workflows: delays, conditional branching, digests, throttling. | **E2**: Add multi-step DAG engine with delay steps. |
+| **Digests & Batching** | None. Every event triggers immediate sends. | Turnkey digest engine (batch 20 actions into 1 daily/weekly email). | **E3**: Build outbox aggregation & digest window worker. |
+| **In-App Experience** | Ephemeral SSE pipe with auto-ack and reconnect replay. | Persistent notification center, read/unread states, badges, React/Vue SDKs. | **E1**: Add `in_app_messages` store with read/unread flags and React SDK. |
+| **Quiet Hours** | Local recipient timezone calculation, outbox deferral, Arq delayed dispatch. | Recipient & tenant quiet hours with delivery window holding. | **Completed**. |
+| **Dead-Letter Ops** | Dead-letter list API & UI table with one-click retry (no search or filters yet). | Dead-letter inbox, automatic redrive policies, failure analytics. | Add automated redrive policies on transient provider recovery. |
+| **Observability** | `GET /api/v1/metrics` channel/status matrix, per-provider health, and attempt failover trail. | OpenTelemetry end-to-end tracing, Prometheus metrics (`/metrics`). | **D1/D2**: Add OpenTelemetry spans and Prometheus metrics exporter. |
 
 ---
 
-## 3. Priority 1: Critical Engine Fixes (Phase 6 Completion)
+## 3. Verified Completed Milestones
 
-### TODO-1.1: Wire Notification Settlement (`Notification.settle` & `list_settleable`)
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Critical
-- **Implementation Details**:
-  - Created reusable helper `services/settlement.py::settle_notification(uow, tenant_id, notification_id)`.
-  - Wired into `ReconciliationService._settle()` for periodic background reconciliation sweeps of settleable notifications.
-  - Wired into `api/v1/notifications.py::ack_notification()` to immediately settle notifications when SSE client acknowledges delivery.
-  - Wired into `api/v1/webhooks.py::provider_webhook()` to immediately settle notifications when external provider DLR webhooks arrive.
-  - Added unit test in `tests/test_reconciliation_service.py::test_reconciliation_settles_notification_when_attempts_terminal` verifying full transition to `COMPLETED` and `FAILED`.
-- **Remaining Minor Polish**:
-  - In `DeliveryService.deliver()`, when a delivery succeeds on a provider where `expects_confirmation=False` (e.g. SMTP/Console), call `await settle_notification(uow, attempt.tenant_id, attempt.notification_id)` immediately instead of waiting for the 30-second reconciliation sweep.
+### Phase 6: Delivery Lifecycle & Worker Claim Semantics
 
----
-
-### TODO-1.2: Fix False Dead-Lettering of SMTP & Console Deliveries
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Critical
-- **Implementation Details**:
-  - Added `confirms_delivery: bool` attribute to `NotificationProvider` protocol in `services/ports/providers.py`.
-  - Set `confirms_delivery = False` on `SmtpEmailProvider`, `ConsoleEmailProvider`, `ConsoleSmsProvider`, and `ConsolePushProvider`.
-  - Set `confirms_delivery = True` on `FirebasePushProvider` and `SseInAppProvider` (require delivery confirmation).
-  - Updated `DeliveryService.deliver()` to check `provider.confirms_delivery` and set `expects_confirmation` on `attempt.mark_sent()`.
-  - Fixed `repositories/delivery_repository.py::add_many()` to persist `expects_confirmation` into PostgreSQL.
-  - Verified via test in `tests/test_delivery_service.py` that non-confirming providers record `expects_confirmation=False` and are never swept as expired dead-letters.
-
----
-
-### TODO-1.3: Wire Worker Claim Semantics (`mark_dispatching` & `list_stuck`)
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Critical
-- **Implementation Details**:
-  - In `DeliveryService.deliver()`, `attempt.mark_dispatching(datetime.now(timezone.utc))` is committed to PostgreSQL before invoking `provider.send()`.
-  - Added `stuck_lost_ttl_seconds` (300s) and `stuck_in_doubt_ttl_seconds` (300s) to `config/reconciliation.py`.
-  - In `ReconciliationService.sweep_once()`, added `_requeue_stuck()` which queries `uow.delivery_attempts.list_stuck(...)`, calls `mark_requeued()`, and writes a new outbox entry to re-dispatch the job.
-  - Verified via test `tests/test_reconciliation_service.py::test_reconciliation_requeues_stuck_attempts`.
-
----
-
-## 4. Priority 2: Reliability & Architecture Fixes
-
-### TODO-2.1: Prevent 24-Hour Dispatch Lockout on Worker Crash
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: High
-- **Implementation Details**:
-  - Updated `jobqueue/dispatch_guard.py`:
-    - `acquire(key)` sets short-lived in-flight lease with `ex=180` (3 minutes).
-    - `complete(key)` marks the dispatch permanently finished with 24h key `pulse:dispatched:{key}`.
-    - `release(key)` removes the in-flight key immediately upon recoverable failure.
-  - Updated `DeliveryService.deliver()` to call `guard.complete()` on successful delivery and `guard.release()` on retryable failure.
-  - If a worker crashes mid-send, the 180s lease expires automatically, unblocking stuck attempt sweeps and queue retries.
-
----
-
-### TODO-2.2: Connect Database `providers` Table & API to Dispatch Runtime
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: High
-- **Affected Files**:
-  - `database/models/provider.py`
-  - `repositories/provider_repository.py`
-  - `providers/registry.py`
-  - `workers/context.py`
-  - `services/delivery_service.py`
-- **Problem**:
-  Pulse has a `providers` table and `/api/v1/providers` CRUD API, but `workers/context.py` instantiates `ProviderRegistry` strictly against static `.env` settings. The DB table is completely bypassed, preventing per-tenant provider configurations.
-- **Action Plan**:
-  1. Update `ProviderResolver` protocol in `services/delivery_service.py` to accept `(tenant_id: TenantId, channel: ChannelType)`.
-  2. In `ProviderRegistry` or worker resolution, check database for active tenant-specific provider rows:
-     ```python
-     stored = await uow.providers.get_active_by_channel(tenant_id, channel)
-     ```
-  3. Dynamically instantiate the provider driver using the JSONB `credentials`/`settings` config if present.
-  4. If no tenant DB row exists, fall back to default `.env` provider instance.
-  5. Pass `provider_id=stored.id` into `attempt.mark_sent(...)` so the foreign key is properly tracked.
-
----
-
-### TODO-2.3: Upgrade Recipient Resolution Beyond In-Memory Stub
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: High
-- **Implementation Details**:
-  - Implemented `DatabaseRecipientClient` in `clients/sentinel_client.py` adhering to `SentinelClient` protocol.
-  - Parses inline recipients from `payload["recipients"]` if present.
-  - If omitted, resolves the recipient from `uow.recipients.get_by_external_ref(tenant_id, ...)` using `recipient_id`, `user_id`, or `external_ref`.
-  - Wired into `main.py` and `workers/scheduler_worker.py`.
-  - Added unit test `tests/test_recipient_client.py` verifying database lookup and fallback behavior.
-
----
-
-## 5. Priority 3: Functional Gaps & Usability
-
-### TODO-3.1: Enforce Recipient Quiet Hours
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Medium
-- **Implementation Details**:
-  - Added `window_end(reference_dt: datetime) -> datetime` to `domain/value_objects/quiet_hours.py` handling normal and overnight (e.g. 22:00 - 07:00) windows.
-  - In `NotificationService.fan_out()`: checks `preference.quiet_hours.covers(recipient_local_time)`.
-  - If quiet hours apply, computes window end in UTC, stamps `attempt.next_retry_at`, and passes `defer_until` to the Outbox.
-  - Updated `OutboxRelay` to calculate `defer_by_seconds` from `defer_until` and pass `_defer_by` to the Arq queue.
-  - Added unit tests in `tests/test_quiet_hours.py` and `tests/test_notification_service.py::test_fan_out_defers_during_quiet_hours`.
-
----
-
-### TODO-3.2: Add Notification & Event List/Search Endpoints
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Medium
-- **Backend Implementation**:
-  - Added `GET /api/v1/notifications` with query parameters `status`, `limit`, and `offset`. Sets `X-Total-Count` header and returns `list[NotificationOut]`.
-  - Added `GET /api/v1/events` with pagination and `X-Total-Count` header.
-  - Implemented `list_by_tenant()` on `NotificationRepository` and `EventRepository`.
-- **Remaining Action Items**:
-  - Update `ui/index.html` to add a "Recent Notifications" table view with status badges, pagination, and clickable rows that open detail views.
-
----
-
-### TODO-3.3: Implement Dead-Letter Management API & UI Replay
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Medium
-- **Backend Implementation**:
-  - Created `api/v1/dead_letters.py`:
-    - `GET /api/v1/dead-letters`: Lists dead-lettered attempts for tenant with pagination.
-    - `POST /api/v1/dead-letters/{attempt_id}/retry`: Verifies dead status, clears guard lock, marks attempt `PENDING` with updated retry count, and publishes an outbox dispatch entry.
-  - Registered router in `main.py`.
-- **Remaining Action Items**:
-  - Update `ui/index.html` to add a "Dead Letters" tab displaying failed deliveries, failure reasons, error details, and an inline "Retry" button.
-
----
-
-### TODO-3.4: Auto-Provision Recipient on SSE Stream Connect
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Medium
-- **Implementation Details**:
-  - In `api/v1/sse.py`, when a client connects to `/api/v1/sse/stream/{recipient}`, if `get_by_external_ref` returns None, it auto-upserts a new `Recipient` row in the database.
-  - Prevents spurious `404: Unknown recipient` errors when a user opens the web console before their first notification is created.
-
----
-
-## 6. Priority 4: Code Hygiene & Protocol Integrity
-
-### TODO-4.1: Clean Up Ruff Lint Errors & Warnings
-- **Status**: **`[x] COMPLETED`**
-- **Implementation**: Removed unused `UserId` from line 11 in `services/identity_service.py`. `ruff check .` passes cleanly.
-
----
-
-### TODO-4.2: Resolve Pydantic Field Shadowing Warning in LoggingSettings
-- **Status**: **`[x] COMPLETED`**
-- **Implementation**: Changed `json: bool = True` to `json_format: bool = Field(default=True, alias="json")` in `config/logging.py`. Startup produces zero warnings.
-
----
-
-### TODO-4.3: Synchronize `UnitOfWork` Protocol with Identity Repositories
-- **Status**: **`[x] COMPLETED`**
-- **Implementation**: Added repository attributes (`tenants`, `users`, `memberships`, `api_keys`, `sessions`) to `UnitOfWork` protocol in `services/ports/uow.py` and implemented corresponding fakes in `tests/fakes.py::InMemoryUnitOfWork`.
-
----
-
-### TODO-4.4: Add Foreign Key Constraints to Identity Schema
-- **Status**: **`[x] COMPLETED`**
+#### TODO-1.1: Notification Settlement
+- **Status**: `[x] COMPLETED`
+- **Files**: `services/settlement.py`, `services/reconciliation_service.py`, `services/delivery_service.py`, `api/v1/notifications.py`, `api/v1/webhooks.py`
 - **Implementation**:
-  - Added `ForeignKey("tenants.id", ondelete="CASCADE")` and `ForeignKey("users.id", ondelete="CASCADE")` to `tenant_memberships`, `api_keys`, and `sessions` in `database/models/identity.py`.
-  - Created and applied migration `b8d4f6a2c913_phase5_identity_foreign_keys.py`. Linear migration chain intact.
+  - Centralized settlement logic in `services/settlement.py::settle_notification()`.
+  - Transitions `Notification` to `COMPLETED` when all sister attempts are delivered/sent, or `FAILED` when attempts die.
+  - Settle check executes immediately in `DeliveryService.deliver()` for fire-and-forget sends, on SSE client acknowledgment in `ack_notification()`, on provider delivery receipt callbacks in `webhooks.py`, and in the 30-second reconciliation sweep.
+- **Verification**: `tests/test_reconciliation_service.py`, `tests/api/test_events_notifications.py`.
+
+#### TODO-1.2: False Dead-Lettering Fix
+- **Status**: `[x] COMPLETED`
+- **Files**: `services/ports/providers.py`, `providers/catalog.py`, `services/delivery_service.py`, `repositories/delivery_repository.py`
+- **Implementation**:
+  - `confirms_delivery` added to `NotificationProvider` protocol.
+  - Non-confirming providers (SMTP, SES, console) set `confirms_delivery = False`.
+  - API providers (Resend, SendGrid, Twilio) dynamically set `confirms_delivery = True` only once webhook secrets are configured.
+  - FCM and SSE set `confirms_delivery = True`.
+  - `DeliveryService.deliver()` passes `expects_confirmation` to `attempt.mark_sent()`, persisted via `delivery_repository.py`.
+- **Verification**: `tests/test_delivery_service.py`, `tests/test_receipts.py`.
+
+#### TODO-1.3: Worker Claim Semantics
+- **Status**: `[x] COMPLETED`
+- **Files**: `services/delivery_service.py`, `services/reconciliation_service.py`, `config/reconciliation.py`
+- **Implementation**:
+  - In `DeliveryService.deliver()`, `attempt.mark_dispatching()` is committed before invoking the provider.
+  - In `ReconciliationService.sweep_once()`, `_requeue_stuck()` queries `uow.delivery_attempts.list_stuck(...)` with `SKIP LOCKED`.
+  - Jobs unclaimed for 300s or in-doubt for 300s (both longer than the 180s dispatch lease) are marked `mark_requeued()` and re-emitted to the Outbox.
+- **Verification**: `tests/test_reconciliation_service.py::test_sweep_requeues_stuck_in_doubt_attempt`. Real-crash behaviour (kill a worker mid-send) is still untested: see A2.
 
 ---
 
-### TODO-4.5: Add API Router Test Suite with FastAPI `TestClient`
-- **Status**: **`[x] COMPLETED`**
-- **Severity**: Low
-- **Affected Files**:
-  - `tests/api/test_auth.py` (new)
-  - `tests/api/test_events.py` (new)
-  - `tests/api/test_notifications.py` (new)
-  - `tests/api/test_dead_letters.py` (new)
-  - `tests/api/test_sse.py` (new)
-- **Problem**:
-  The existing 50 tests are all service and repository unit tests. There are no automated integration tests verifying HTTP routing, header parsing, session cookies, API key authentication dependencies, JSON serialization, or HTTP status codes.
-- **Action Plan**:
-  1. Add `pytest-asyncio` / `httpx.AsyncClient` test harness for FastAPI routes in `tests/api/conftest.py`.
-  2. Implement tests for authentication routes (`/api/v1/auth/login`, `/api/v1/auth/me`).
-  3. Implement tests for event ingestion (`POST /api/v1/events`).
-  4. Implement tests for notification lookup and listing (`GET /api/v1/notifications`).
-  5. Implement tests for dead-letter listing and replay (`POST /api/v1/dead-letters/{id}/retry`).
+### Phase 7: Architecture, Dispatch Guard & Recipient Resolution
+
+#### TODO-2.1: Dispatch Guard Lockout Prevention
+- **Status**: `[x] COMPLETED`
+- **Files**: `jobqueue/dispatch_guard.py`, `services/delivery_service.py`
+- **Implementation**:
+  - `RedisDispatchGuard.acquire()` sets a 180s in-flight lease (`pulse:dispatch:{key}`).
+  - `complete()` transitions the key to a 24h finished marker (`pulse:dispatched:{key}`).
+  - `release()` immediately deletes the key on retryable failure.
+  - Crashed workers release their lock automatically after 180 seconds, allowing stuck sweeps to retry safely.
+- **Verification**: logic is exercised against `FakeDispatchGuard` only; the Redis implementation has no tests yet (see A2/A4).
+
+#### TODO-2.2 & G1–G5: Database Provider Runtime & Failover Chain
+- **Status**: `[x] COMPLETED`
+- **Files**: `providers/registry.py`, `providers/catalog.py`, `services/secrets.py`, `services/delivery_service.py`
+- **Implementation**:
+  - Replaced static `.env` registry with dynamic `ProviderRegistry`.
+  - Workflow definition specifies ordered provider chains: `definition.provider_chains = {"email": ["prov_1", "prov_2"]}`.
+  - Secret credentials stored encrypted with Fernet app key (`SecretBox`).
+  - `DeliveryService._send_through_chain()` iterates through the chain; on provider timeout or 5xx error, it fails over to the next provider and records the trail on `attempt.last_error`.
+- **Verification**: `tests/test_provider_registry.py`, `tests/test_delivery_failover.py`, `tests/test_secrets.py`.
+
+#### TODO-2.3: Recipient Resolution Upgrade
+- **Status**: `[x] COMPLETED`
+- **Files**: `clients/sentinel_client.py`, `main.py`, `workers/scheduler_worker.py`
+- **Implementation**:
+  - `DatabaseRecipientClient` parses inline recipient payloads if present.
+  - Falls back to querying `uow.recipients.get_by_external_ref(tenant_id, ref)` using `recipient_id`, `user_id`, or `external_ref`.
+- **Verification**: `tests/test_notification_service.py::test_database_recipient_client_falls_back_to_stored_recipient`.
 
 ---
 
-## 7. Priority 5: Strategic Market Parity Roadmap
+### Phase 8: Usability, Quiet Hours & Admin Console UI
 
-Features needed to compete directly with **Knock** and **Novu**:
+#### TODO-3.1: Quiet Hours Enforcement
+- **Status**: `[x] COMPLETED`
+- **Files**: `domain/value_objects/quiet_hours.py`, `services/notification_service.py`, `jobqueue/relay.py`
+- **Implementation**:
+  - `QuietHours.window_end(reference_dt)` calculates end of quiet window across midnight boundaries.
+  - `NotificationService.fan_out()` evaluates quiet hours against recipient local timezone; if covered, stamps `attempt.next_retry_at` and passes `defer_until` to Outbox.
+  - `OutboxRelay` computes `defer_by_seconds` and passes `_defer_by` to the Arq queue.
+- **Verification**: `tests/test_notification_service.py` (`test_quiet_hours_defer_attempt_and_outbox_publish`, `test_quiet_hours_window_end_wraps_midnight_and_respects_timezone`).
 
-1. **Batching & Digest Engine**:
-   - Add a `digest` workflow step with configurable time windows (e.g. `15m`, `1h`, `1d`) or thresholds (e.g. `10 items`).
-   - Store events in a digest aggregation buffer; on window expiry, render a single consolidated summary email/push.
-2. **Persistent In-App Notification Center**:
-   - Add `in_app_messages` table storing notifications with `is_read`, `read_at`, `is_archived`.
-   - Provide REST endpoints: `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`.
-   - Publish a lightweight headless JS/React component.
-3. **Multi-Step Workflows (DAGs)**:
-   - Expand `WorkflowDefinition` from flat channel lists to ordered steps with conditions and delays (e.g. `Step 1: In-App` $\rightarrow$ `Delay: 10m` $\rightarrow$ `If unread: Send Email`).
-4. **Production Provider Drivers**:
-   - Email: AWS SES (`boto3`), Resend, SendGrid.
-   - SMS: Twilio, MessageBird / Sinch.
-   - Push: APNs (HTTP/2 with `.p8` token credentials).
-   - Chat: Slack webhook and bot driver.
-5. **OpenTelemetry & Distributed Tracing**:
-   - Inject trace contexts (`traceparent`) into Outbox entries and Arq payloads.
-   - Connect HTTP ingestion $\rightarrow$ Outbox Relay $\rightarrow$ Worker Dispatch $\rightarrow$ Webhook callback into a single trace view.
+#### TODO-3.2, 3.3, 3.4 & G7, G11: Console UI & Endpoints
+- **Status**: `[x] COMPLETED`
+- **Files**: `ui/index.html`, `api/v1/notifications.py`, `api/v1/events.py`, `api/v1/dead_letters.py`, `api/v1/sse.py`, `api/v1/providers.py`
+- **Implementation**:
+  - `GET /api/v1/notifications` & `GET /api/v1/events` with pagination and `X-Total-Count`.
+  - `GET /api/v1/dead-letters` and `POST /api/v1/dead-letters/{id}/retry` redrive endpoint.
+  - `api/v1/sse.py` auto-provisions missing recipient records on connect.
+  - Console UI (`ui/index.html`):
+    - Provider catalog picker modal with logos, credential fields, and live connection test.
+    - Provider cards showing webhook URLs with copy button, receipts on/off state and live health.
+    - Structured workflow editor with drag-to-reorder provider chains.
+    - Recent notifications list table with pagination, status filter, and detail modal.
+    - Dead-letter management table with error details and one-click Retry button.
+    - Live SSE test stream with auto-ack and reconnect replay.
+- **Verification**: `tests/api/test_events_notifications.py`, `tests/api/test_dead_letters.py`, `tests/api/test_providers.py`, `tests/api/test_sse.py`.
+
+---
+
+### Phase 9: Code Hygiene, Schema Integrity & API Test Harness
+
+#### TODO-4.1 to 4.5: Cleanliness, Migrations & Integration Suite
+- **Status**: `[x] COMPLETED`
+- **Files**: `services/identity_service.py`, `config/logging.py`, `services/ports/uow.py`, `database/models/identity.py`, `tests/api/`
+- **Implementation**:
+  - Removed unused imports (`UserId`).
+  - Fixed Pydantic field shadowing in `LoggingSettings`.
+  - Added identity repositories to `UnitOfWork` protocol and `InMemoryUnitOfWork`.
+  - Added cascade foreign keys in `b8d4f6a2c913_phase5_identity_foreign_keys.py`.
+  - Built comprehensive FastAPI `httpx.AsyncClient` test harness in `tests/api/conftest.py` with 40+ API integration tests.
+- **Verification**: `ruff check .`, `pytest tests/api/`.
+
+---
+
+### Phase 10: Provider Catalog, Failover & Webhook Delivery Receipts
+
+#### G1–G9, G11, H1–H3: Production Drivers, Failover & Delivery Callbacks
+- **Status**: `[x] COMPLETED`
+- **Files**:
+  - `providers/catalog.py` & `providers/assets/`
+  - `providers/sns.py`, `services/provider_health.py`, `repositories/provider_call_repository.py`
+  - `providers/email/ses.py` (Amazon SES v2 with error categorization)
+  - `providers/email/resend.py` (Resend email API)
+  - `providers/email/sendgrid.py` (SendGrid v3 API)
+  - `providers/sms/twilio.py` (Twilio SMS API)
+  - `providers/push/firebase.py` (FCM v1 with per-provider apps and token cleanup)
+  - `providers/receipts.py` (Webhook signature verification & receipt parser)
+  - `api/v1/webhooks.py` (Shared per-provider signed webhook endpoints)
+- **Implementation**:
+  - `POST /api/v1/webhooks/p/{provider_id}` verifies incoming webhooks against the specific provider's secret:
+    - **Twilio**: HMAC-SHA1 over full URL and sorted POST parameters.
+    - **Resend**: Svix timestamp and HMAC-SHA256 signature verification.
+    - **SendGrid**: ECDSA public key signature verification over timestamp + payload.
+  - Stored `provider_message_id` on delivery attempts (migration `d2b6e8f0a513`) for asynchronous receipt matching.
+  - In-flight failover logs the failure trail on `attempt.last_error`.
+  - FCM error classification: dead tokens (`UNREGISTERED`, sender mismatch) are deleted; `INVALID_ARGUMENT` is permanent but never prunes tokens (FCM does not say whether token or payload was at fault); outages/quota retry and fail over.
+  - SES delivery events arrive through SNS (`providers/sns.py`): signature, certificate-host and topic checks, automatic subscription confirmation.
+  - Every provider call is logged (`provider_calls`) and aggregated into health (`services/provider_health.py`).
+- **Verification**: `tests/test_http_providers.py`, `tests/test_ses_provider.py`, `tests/test_fcm_provider.py`, `tests/test_receipts.py`, `tests/test_sns_receipts.py`, `tests/test_provider_health.py`, `tests/api/test_provider_webhooks.py`, `tests/api/test_ses_webhook.py`, `tests/integration/test_localstack_ses.py` (needs `LOCALSTACK_URL`).
+
+---
+
+## 4. Actionable Implementation Guide for Open Items
+
+### Sprint 1: Reliability & CI
+
+#### A3: GitHub Actions CI Pipeline
+- **Priority**: High | **Effort**: S
+- **Implementation**:
+  Create `.github/workflows/ci.yml`:
+  ```yaml
+  name: CI
+  on: [push, pull_request]
+  jobs:
+    test:
+      runs-on: ubuntu-latest
+      services:
+        postgres:
+          image: postgres:16-alpine
+          env:
+            POSTGRES_DB: pulse_test
+            POSTGRES_USER: pulse
+            POSTGRES_PASSWORD: secretpassword
+          ports: ["5432:5432"]
+          options: >-
+            --health-cmd pg_isready
+            --health-interval 10s
+            --health-timeout 5s
+            --health-retries 5
+        redis:
+          image: redis:7-alpine
+          ports: ["6379:6379"]
+      steps:
+        - uses: actions/checkout@v4
+        - uses: actions/setup-python@v5
+          with: { python-version: "3.10" }
+        - run: pip install uv && uv sync
+        - run: uv run ruff check .
+        - run: uv run pytest   # in-memory fakes; needs no services
+        - run: uv run alembic upgrade head
+          env:
+            # Settings require database credentials; point them at the service above.
+            PULSE_DATABASE__DRIVER: postgresql+asyncpg
+            PULSE_DATABASE__HOST: localhost
+            PULSE_DATABASE__PORT: "5432"
+            PULSE_DATABASE__USERNAME: pulse
+            PULSE_DATABASE__PASSWORD: secretpassword
+            PULSE_DATABASE__DB: pulse_test
+  ```
+
+#### A1 & A2: Full-Stack Smoke & Chaos Tests
+- **Priority**: Critical | **Effort**: M
+- **Implementation**:
+  1. Add end-to-end integration test in `tests/test_chaos.py` simulating worker termination mid-dispatch (`SIGKILL` during `dispatch_started_at`).
+  2. Verify that once the 180s dispatch lease has expired and the attempt has been in doubt for `stuck_in_doubt_ttl_seconds` (300s), the sweep requeues it. Use short TTLs in the test and a real Redis for the guard (the guard is only tested against a fake today).
+
+---
+
+### Sprint 2: Security & Rate Limiting
+
+#### C1: Per-Tenant Rate Limiting & Quotas
+- **Priority**: High | **Effort**: M
+- **Problem**: A rogue tenant can overwhelm outbox relays and provider APIs with event flooding.
+- **Implementation**:
+  1. Implement Redis Token Bucket in `jobqueue/rate_limiter.py`.
+  2. In `api/v1/events.py`, evaluate rate limit before accepting event:
+     - Return `HTTP 429 Too Many Requests` with `Retry-After` header when bucket is empty.
+  3. Support per-tenant daily quota limits stored on the `tenants` table.
+
+#### H4: Device Token Unregistration Endpoint
+- **Priority**: Medium | **Effort**: S
+- **Implementation**:
+  1. Add `DELETE /api/v1/devices` (body: `{"token": ...}`) in `api/v1/devices.py`.
+  2. Deletes the token from `device_tokens` for the acting tenant (tokens can be long, so pass it in the body rather than the path).
+
+---
+
+### Sprint 3: In-App Message Center & Multi-Step DAGs
+
+#### E1: Persistent In-App Notification Center
+- **Priority**: High | **Effort**: L
+- **Problem**: SSE in-app notifications are ephemeral. If a user is not online or disconnects, the notification cannot be retrieved later in a UI inbox.
+- **Implementation**:
+  1. Add `in_app_messages` database table:
+     - Columns: `id`, `tenant_id`, `recipient_id`, `notification_id`, `title`, `body`, `data` (JSONB), `is_read` (bool), `read_at` (timestamp), `is_archived` (bool), `created_at`.
+  2. Add REST Endpoints:
+     - `GET /api/v1/inbox`: List recipient messages with unread count and pagination.
+     - `POST /api/v1/inbox/{id}/read`: Mark specific message read.
+     - `POST /api/v1/inbox/read-all`: Mark all unread messages as read.
+     - `DELETE /api/v1/inbox/{id}`: Archive message.
+  3. When an `in_app` delivery attempt succeeds, insert an `in_app_messages` record.
+
+#### E2: Multi-Step DAG Workflow Engine
+- **Priority**: High | **Effort**: L
+- **Problem**: Workflows currently fan out to all channels simultaneously or step down on timeout. They cannot express "Send In-App $\rightarrow$ Wait 15 minutes $\rightarrow$ If unread, send Email".
+- **Implementation**:
+  1. Define workflow DAG node types: `channel_dispatch`, `delay`, `condition` (`is_read`, `channel_failed`).
+  2. Add workflow execution state machine in `services/workflow_executor.py`.
+  3. Schedule delayed workflow hops via Arq background tasks.
