@@ -1507,6 +1507,26 @@ async function pickCatalogProvider() {
   });
 }
 
+/* Health from recent calls: status pill, success rate, latency, last failure. */
+const HEALTH_LOOK = {
+  healthy:  { color: "green", label: "healthy" },
+  degraded: { color: "amber", label: "degraded" },
+  down:     { color: "red",   label: "down" },
+  idle:     { color: "",      label: "no recent traffic" },
+};
+function healthHtml(h) {
+  if (!h) return "";
+  const look = HEALTH_LOOK[h.status] || HEALTH_LOOK.idle;
+  const parts = [];
+  if (h.success_rate !== null) parts.push(`${(h.success_rate * 100).toFixed(h.success_rate === 1 ? 0 : 1)}% of ${h.calls} calls ok`);
+  if (h.p95_latency_ms !== null) parts.push(`p95 ${Math.round(h.p95_latency_ms)} ms`);
+  const failure = h.last_failure_at
+    ? `<div class="muted" style="font-size:12px;margin-top:2px" title="${esc(h.last_error || "")}">Last failure ${esc(fmtDate(h.last_failure_at))}${h.last_error ? ` — ${esc(h.last_error.slice(0, 90))}` : ""}</div>` : "";
+  return `<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span class="badge ${look.color}">${look.label}</span>
+      <span class="muted" style="font-size:12px">${parts.join(" · ") || `last ${h.window_hours}h`}</span></div>${failure}`;
+}
+
 /* Delivery-receipt status + webhook URL for providers that report delivery. */
 function receiptsHtml(p) {
   if (!p.webhook_path) return "";
@@ -1541,7 +1561,11 @@ function renderProviders(el) {
   async function load() {
     const list = $("#list", el);
     try {
-      const [items, catalog] = await Promise.all([api("/providers"), api("/provider-catalog")]);
+      const [items, catalog, health] = await Promise.all([
+        api("/providers"), api("/provider-catalog"),
+        api("/providers/health").catch(() => []),     // health is a bonus; never block the list
+      ]);
+      const healthById = Object.fromEntries(health.map(h => [h.provider_id, h]));
       if (items.length === 0) {
         list.innerHTML = emptyState("No providers yet", "Choose one from the catalog, enter its settings, then add it to a workflow.");
         return;
@@ -1553,6 +1577,7 @@ function renderProviders(el) {
             <div style="font-weight:600">${esc(p.label)} ${badge(chLabel(p.channel))} ${boolBadge(p.is_active)}</div>
             <div class="muted">${esc(p.catalog?.name || p.name)}
               ${p.used_by.length ? ` · used by ${p.used_by.map(u => esc(u.name)).filter((v, i, a) => a.indexOf(v) === i).join(", ")}` : " · not used by any workflow yet"}</div>
+            ${healthHtml(healthById[p.id])}
             ${receiptsHtml(p)}
           </div>
           <button class="btn sm" data-edit="${esc(p.id)}">Edit</button>
