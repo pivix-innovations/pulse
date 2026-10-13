@@ -227,6 +227,21 @@ class Stack:
 
         return asyncio.run(run())
 
+    def sse_connections(self) -> int:
+        """Total live SSE connections across recipients, from the registry's counters."""
+        async def run():
+            r = self.settings.redis
+            redis = Redis(host=r.host, port=r.port, db=self.redis_db, password=r.password)
+            try:
+                total = 0
+                async for key in redis.scan_iter("pulse:sse:conn:*"):
+                    total += int(await redis.get(key) or 0)
+                return total
+            finally:
+                await redis.aclose()
+
+        return asyncio.run(run())
+
     def notification(self, notification_id: str) -> dict:
         r = self.api("GET", f"/notifications/{notification_id}")
         r.raise_for_status()
@@ -236,3 +251,69 @@ class Stack:
         return "\n".join(
             f"--- {n} ---\n{self.log(n)[-1500:]}" for n in ("api", "email", "push", "sms", "scheduler")
         )
+
+
+class SseClient:
+    """A live SSE connection to the API process, read on a background thread."""
+
+    def __init__(self, stack: "Stack", recipient: str, *, last_event_id: str | None = None) -> None:
+        import queue
+        import threading
+
+        self.events: "queue.Queue[dict]" = queue.Queue()
+        self._stop = threading.Event()
+        headers = {"X-API-Key": stack.api_key}
+        if last_event_id:
+            headers["Last-Event-ID"] = last_event_id
+        url = f"http://127.0.0.1:{stack.port}/api/v1/sse/stream"
+        self._params = {"recipient": recipient}
+
+        def run() -> None:
+            import json
+
+            try:
+                with self._client as client:
+                    with client.stream("GET", url, params=self._params, headers=headers) as res:
+                        self.status = res.status_code
+                        fields: dict = {}
+                        for line in res.iter_lines():
+                            if self._stop.is_set():
+                                return
+                            if line == "":
+                                if "data" in fields:
+                                    self.events.put({**fields, "data": json.loads(fields["data"])})
+                                fields = {}
+                            elif line.startswith(":"):
+                                self.events.put({"comment": line[1:].strip()})
+                            else:
+                                key, _, value = line.partition(": ")
+                                fields[key] = value
+            except (httpx.HTTPError, OSError):
+                pass  # closed by close()
+
+        self.status = None
+        self._client = httpx.Client(timeout=httpx.Timeout(10, read=None))
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def next_notification(self, timeout: float = 15) -> dict:
+        import queue
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                event = self.events.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if event.get("event") == "notification":
+                return event
+        raise AssertionError("no notification arrived on the SSE stream")
+
+    def close(self) -> None:
+        """Drop the connection for real, as a browser tab closing would."""
+        self._stop.set()
+        try:
+            self._client.close()
+        except Exception:
+            pass
+        self._thread.join(timeout=5)
