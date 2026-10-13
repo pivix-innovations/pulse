@@ -25,3 +25,6 @@ class ReconciliationSettings(ConfigSection):
     # Provider call log (feeds provider health) is pruned past this age.
     provider_call_retention_days: PositiveInt = 30
     provider_call_prune_interval_seconds: float = 3600.0
+    # Inbox messages are dropped this long after creation, or after archiving.
+    inbox_retention_days: PositiveInt = 90
+    inbox_archived_retention_days: PositiveInt = 7

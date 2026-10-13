@@ -98,11 +98,18 @@ async def main() -> None:
                 cutoff = datetime.now(timezone.utc) - timedelta(
                     days=settings.reconciliation.provider_call_retention_days
                 )
+                now = datetime.now(timezone.utc)
                 async with uow_factory() as uow:
                     removed = await uow.provider_calls.prune(cutoff)
+                    inbox_removed = await uow.inbox.prune(
+                        now - timedelta(days=settings.reconciliation.inbox_retention_days),
+                        now - timedelta(days=settings.reconciliation.inbox_archived_retention_days),
+                    )
                     await uow.commit()
                 if removed:
                     logger.info("Pruned %d provider call log row(s)", removed)
+                if inbox_removed:
+                    logger.info("Pruned %d inbox message(s)", inbox_removed)
             except Exception:
                 logger.exception("Provider call prune failed")
             try:
