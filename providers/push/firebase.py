@@ -137,3 +137,40 @@ class FcmPushProvider(PushProvider):
             failover=False,
             invalid_destinations=stale,
         )
+
+
+async def check_fcm(credentials_json: str) -> tuple[bool, str]:
+    """
+    Validates a service account without notifying anyone: a dry-run send to
+    a dummy token. FCM answering "bad token" proves the credentials worked.
+    """
+    try:
+        info = json.loads(credentials_json)
+    except ValueError:
+        return False, "Service account JSON is not valid JSON"
+    if not isinstance(info, dict) or info.get("type") != "service_account":
+        return False, "This is not a Firebase service account key (\"type\" must be service_account)"
+
+    def _probe() -> tuple[bool, str]:
+        from firebase_admin import messaging
+
+        try:
+            app = _get_app(credentials_json, None)
+            messaging.send(
+                messaging.Message(data={"probe": "1"}, token="pulse-credential-check"),
+                dry_run=True,
+                app=app,
+            )
+        except Exception as exc:
+            kind = classify_fcm_error(exc)
+            if kind in (STALE, PERMANENT):
+                return True, f"Credentials accepted by project {info.get('project_id', '?')}"
+            if kind == AUTH:
+                return False, f"Firebase rejected the credentials: {exc}"
+            return False, f"Could not verify (Firebase unavailable?): {exc}"
+        return True, "Credentials accepted"
+
+    try:
+        return await asyncio.to_thread(_probe)
+    except ValueError as exc:  # malformed key material
+        return False, f"Invalid service account key: {exc}"

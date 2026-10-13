@@ -9,15 +9,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from config.email import EmailSettings
 from domain.enums import ChannelType
 from providers.email.console import ConsoleEmailProvider
+from providers.email.resend import ResendEmailProvider, check_resend
+from providers.email.sendgrid import SendGridEmailProvider, check_sendgrid
 from providers.email.smtp import SmtpEmailProvider
 from providers.push.console import ConsolePushProvider
-from providers.push.firebase import FcmPushProvider
+from providers.push.firebase import FcmPushProvider, check_fcm
 from providers.sms.console import ConsoleSmsProvider
+from providers.sms.twilio import TwilioSmsProvider, check_twilio
 from services.ports.providers import NotificationProvider
 
 ASSETS = Path(__file__).parent / "assets"
@@ -48,6 +51,10 @@ class BuildContext:
 
 
 Builder = Callable[[dict[str, Any], dict[str, Any], BuildContext], NotificationProvider]
+# Live credential check: (config, secrets) -> (ok, human-readable detail).
+Checker = Callable[[dict[str, Any], dict[str, Any]], Awaitable[tuple[bool, str]]]
+# Rules spanning several fields; raises ValueError with the problem.
+CrossValidator = Callable[[dict[str, Any], dict[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +69,8 @@ class ProviderSpec:
     # Needs nothing from the client; a single saved instance is enough.
     builtin: bool = False
     docs_url: str | None = None
+    check: Checker | None = None
+    cross_validate: CrossValidator | None = None
 
     @property
     def id(self) -> str:
@@ -121,6 +130,8 @@ class ProviderSpec:
             (clean_secrets if f.secret else clean_config)[f.key] = value
         if problems:
             raise ValueError("; ".join(problems))
+        if self.cross_validate is not None:
+            self.cross_validate(clean_config, {**{k: None for k in existing_secret_keys}, **clean_secrets})
         return clean_config, clean_secrets
 
     def public(self) -> dict[str, Any]:
@@ -131,6 +142,7 @@ class ProviderSpec:
             "name": self.name,
             "description": self.description,
             "builtin": self.builtin,
+            "testable": self.check is not None,
             "docs_url": self.docs_url,
             "logo_url": f"/api/v1/provider-catalog/{self.channel.value}/{self.key}/logo",
             "fields": [
@@ -190,6 +202,65 @@ def _build_smtp(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext
     )
 
 
+def _build_twilio(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
+    return TwilioSmsProvider(
+        account_sid=config["account_sid"],
+        auth_token=secrets["auth_token"],
+        from_number=config.get("from_number"),
+        messaging_service_sid=config.get("messaging_service_sid"),
+    )
+
+
+def _twilio_cross(config: dict[str, Any], secrets: dict[str, Any]) -> None:
+    if not config.get("from_number") and not config.get("messaging_service_sid"):
+        raise ValueError("Provide a 'from_number' or a 'messaging_service_sid'")
+
+
+def _build_resend(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
+    return ResendEmailProvider(api_key=secrets["api_key"], from_address=config["from_address"])
+
+
+def _build_sendgrid(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
+    return SendGridEmailProvider(api_key=secrets["api_key"], from_address=config["from_address"])
+
+
+async def _check_smtp(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    import aiosmtplib
+
+    client = aiosmtplib.SMTP(
+        hostname=config.get("host"),
+        port=config.get("port", 587),
+        start_tls=config.get("use_tls", True),
+        timeout=10,
+    )
+    try:
+        await client.connect()
+        if secrets.get("username"):
+            await client.login(secrets["username"], secrets.get("password") or "")
+        await client.quit()
+    except aiosmtplib.SMTPAuthenticationError:
+        return False, "Connected, but the server rejected the username/password"
+    except (aiosmtplib.SMTPException, OSError) as exc:
+        return False, f"Could not connect: {exc}"
+    return True, "Connected and authenticated" if secrets.get("username") else "Connected"
+
+
+async def _check_twilio(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    return await check_twilio(config["account_sid"], secrets["auth_token"])
+
+
+async def _check_resend(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    return await check_resend(secrets["api_key"])
+
+
+async def _check_sendgrid(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    return await check_sendgrid(secrets["api_key"])
+
+
+async def _check_fcm(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
+    return await check_fcm(secrets["service_account_json"])
+
+
 def _build_fcm(config: dict[str, Any], secrets: dict[str, Any], ctx: BuildContext):
     return FcmPushProvider(
         credentials_json=secrets.get("service_account_json"),
@@ -222,6 +293,35 @@ _SPECS: tuple[ProviderSpec, ...] = (
             ConfigField("username", "Username", secret=True),
             ConfigField("password", "Password", secret=True),
         ),
+        check=_check_smtp,
+    ),
+    ProviderSpec(
+        key="resend",
+        channel=ChannelType.EMAIL,
+        name="Resend",
+        description="Developer-friendly transactional email API.",
+        logo="email-resend.svg",
+        build=_build_resend,
+        fields=(
+            ConfigField("from_address", "From address", required=True, help="Must use a domain verified in Resend."),
+            ConfigField("api_key", "API key", secret=True, required=True),
+        ),
+        check=_check_resend,
+        docs_url="https://resend.com/docs/api-reference/emails/send-email",
+    ),
+    ProviderSpec(
+        key="sendgrid",
+        channel=ChannelType.EMAIL,
+        name="SendGrid",
+        description="Twilio SendGrid transactional email API.",
+        logo="email-sendgrid.svg",
+        build=_build_sendgrid,
+        fields=(
+            ConfigField("from_address", "From address", required=True, help="Must be a verified sender or domain."),
+            ConfigField("api_key", "API key", secret=True, required=True, help="Needs the Mail Send permission."),
+        ),
+        check=_check_sendgrid,
+        docs_url="https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send",
     ),
     ProviderSpec(
         key="console",
@@ -250,6 +350,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
             ),
         ),
         docs_url="https://firebase.google.com/docs/cloud-messaging",
+        check=_check_fcm,
     ),
     ProviderSpec(
         key="console",
@@ -259,6 +360,23 @@ _SPECS: tuple[ProviderSpec, ...] = (
         logo="push-console.svg",
         build=lambda c, s, ctx: ConsolePushProvider(),
         builtin=True,
+    ),
+    ProviderSpec(
+        key="twilio",
+        channel=ChannelType.SMS,
+        name="Twilio",
+        description="Send SMS worldwide through Twilio Programmable Messaging.",
+        logo="sms-twilio.svg",
+        build=_build_twilio,
+        fields=(
+            ConfigField("account_sid", "Account SID", required=True, help="Starts with AC."),
+            ConfigField("auth_token", "Auth token", secret=True, required=True),
+            ConfigField("from_number", "From number", help="E.164 format, e.g. +14155550100."),
+            ConfigField("messaging_service_sid", "Messaging Service SID", help="Use instead of a from number."),
+        ),
+        cross_validate=_twilio_cross,
+        check=_check_twilio,
+        docs_url="https://www.twilio.com/docs/messaging/api/message-resource",
     ),
     ProviderSpec(
         key="console",

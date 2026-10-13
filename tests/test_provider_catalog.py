@@ -56,3 +56,27 @@ def test_drivers_build_from_config_and_secrets():
     )
     assert smtp.name == "smtp"
     assert get_spec(ChannelType.SMS, "console").build({}, {}, BuildContext()).name == "console"
+
+
+def test_twilio_needs_a_sender():
+    spec = get_spec(ChannelType.SMS, "twilio")
+    base = {"account_sid": "AC1"}
+    with pytest.raises(ValueError, match="from_number"):
+        spec.validate(base, {"auth_token": "t"})
+    spec.validate({**base, "from_number": "+15550001111"}, {"auth_token": "t"})
+    spec.validate({**base, "messaging_service_sid": "MG1"}, {"auth_token": "t"})
+
+
+def test_real_providers_are_testable_and_log_only_ones_are_not():
+    testable = {s.id for s in list_specs() if s.check is not None}
+    assert {"email/smtp", "email/resend", "email/sendgrid", "sms/twilio", "push/fcm"} <= testable
+    assert "email/console" not in testable
+
+
+def test_new_drivers_build_from_saved_values():
+    ctx = BuildContext()
+    assert get_spec(ChannelType.EMAIL, "resend").build({"from_address": "a@b.c"}, {"api_key": "k"}, ctx).name == "resend"
+    assert get_spec(ChannelType.EMAIL, "sendgrid").build({"from_address": "a@b.c"}, {"api_key": "k"}, ctx).name == "sendgrid"
+    assert get_spec(ChannelType.SMS, "twilio").build(
+        {"account_sid": "AC", "from_number": "+1"}, {"auth_token": "t"}, ctx
+    ).name == "twilio"
