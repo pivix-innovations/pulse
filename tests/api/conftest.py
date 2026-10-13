@@ -25,6 +25,14 @@ from workflows.registry import WorkflowRegistry
 PASSWORD = "correct horse battery"
 
 
+@pytest.fixture(autouse=True)
+def cheap_password_hashing(monkeypatch):
+    """Tests sign in constantly; production scrypt cost is baked into each hash, so this only speeds tests up."""
+    import services.identity_service as identity
+
+    monkeypatch.setattr(identity, "_SCRYPT_N", 2**4)
+
+
 class FakeRedis:
     def __init__(self) -> None:
         self.deleted: list[str] = []
