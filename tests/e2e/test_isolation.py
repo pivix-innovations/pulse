@@ -43,6 +43,13 @@ def tenants(stack):
     })
     ids["notification"] = ev.json()["notification_id"]
     ids["attempt"] = stack.notification(ids["notification"])["attempts"][0]["id"]
+    [row] = stack.sql(
+        """INSERT INTO inbox_messages (id, tenant_id, recipient_id, notification_id, attempt_id, title, body)
+           SELECT gen_random_uuid(), tenant_id, recipient_id, notification_id, id, 'A only', 'a secret'
+           FROM delivery_attempts WHERE id = $1::uuid RETURNING id""",
+        ids["attempt"],
+    )
+    ids["inbox"] = str(row["id"])
     yield b, ids
     b.close()
 

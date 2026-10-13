@@ -98,14 +98,41 @@ def test_a_client_that_missed_a_notification_is_replayed_it_on_reconnect_until_i
         third.close()
 
 
-def test_with_nobody_connected_delivery_fails_fast_instead_of_retrying(stack):
+def inbox(stack, recipient, **params):
+    r = stack.api("GET", "/inbox", params={"recipient": recipient, **params})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_with_nobody_connected_the_message_waits_in_the_inbox_until_it_is_read(stack):
     nid = send(stack, "nobody-home")
-    a = wait_for(lambda: attempt(stack, nid)["status"] in ("failed", "dead") and attempt(stack, nid),
-                 timeout=20, what="the attempt to fail")
-    assert a["attempt_count"] == 1                     # no live connection is not retryable
-    assert "No live SSE connection" in a["last_error"]
-    n = wait_for(lambda: (n := stack.notification(nid))["status"] == "failed" and n, what="notification to fail")
-    assert n["attempts"][0]["provider_id"] is None
+    a = wait_for(lambda: attempt(stack, nid)["status"] == "sent" and attempt(stack, nid),
+                 timeout=20, what="the attempt to be sent")
+    assert a["attempt_count"] == 1 and a["awaiting_confirmation"] is True   # stored, not failed, not retried
+
+    page = inbox(stack, "nobody-home")
+    assert page["unread_count"] == 1
+    [message] = page["items"]
+    assert message["title"] == "Hello nobody-home" and message["notification_id"] == nid
+
+    # The person comes online later and reads it: that is the confirmation.
+    read = stack.api("POST", f"/inbox/{message['id']}/read", params={"recipient": "nobody-home"})
+    assert read.status_code == 200 and read.json() == {"changed": 1, "unread_count": 0}
+    n = wait_for(lambda: (n := stack.notification(nid))["status"] == "completed" and n, what="settlement")
+    assert n["attempts"][0]["status"] == "delivered"
+
+
+def test_a_live_event_and_the_inbox_describe_the_same_message(stack):
+    client = connected(stack, "live-and-stored")
+    try:
+        nid = send(stack, "live-and-stored")
+        event = client.next_notification()
+        [message] = inbox(stack, "live-and-stored")["items"]
+        assert event["data"]["inbox_id"] == message["id"]          # a client can mark exactly this one read
+        stack.api("POST", f"/inbox/{message['id']}/read", params={"recipient": "live-and-stored"})
+        wait_for(lambda: attempt(stack, nid)["status"] == "delivered", what="read to confirm delivery")
+    finally:
+        client.close()
 
 
 def test_streams_are_private_to_the_recipient_they_were_opened_for(stack):

@@ -21,11 +21,12 @@ import pytest
 
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
+from domain.entities.inbox import InboxMessage
 from domain.entities.identity import Membership, Tenant, User
 from domain.enums import ChannelType
 from domain.enums.identity import TenantRole
 from domain.value_objects.ids import (
-    DeadLetterId, DeliveryAttemptId, MembershipId, TenantId, UserId,
+    DeadLetterId, DeliveryAttemptId, InboxMessageId, MembershipId, TenantId, UserId,
 )
 from services.identity_service import IdentityService, hash_password
 from services.secrets import SecretBox, generate_key
@@ -108,6 +109,12 @@ async def iso(world):
     )
     await world.uow.dead_letters.add(dead)
     ids["dead_letter"] = str(dead.id)
+    ada = await world.uow.recipients.get_by_external_ref(world.tenant_id, "ada")
+    inbox = await world.uow.inbox.add(InboxMessage(
+        id=InboxMessageId.new(), tenant_id=world.tenant_id, recipient_id=ada.id,
+        notification_id=attempt.notification_id, attempt_id=attempt.id, title="A only", body="a's secret message",
+    ))
+    ids["inbox"] = str(inbox.id)
     key_row = (await a_admin.post("/api/v1/tenant/api-keys", json={"name": "a-extra"})).json()
     ids["api_key"] = key_row["id"]
     ids["membership"] = str(next(iter(await world.uow.memberships.list_for_tenant(world.tenant_id))).id)
@@ -140,6 +147,10 @@ ATTACKS = [
     ("b", "DELETE", "/api/v1/preferences/{preference}", None),
     ("b", "GET", "/api/v1/preferences?recipient=ada", None),   # B has no recipient "ada"
     ("b", "POST", "/api/v1/dead-letters/{dead_letter}/retry", None),
+    ("b", "POST", "/api/v1/inbox/{inbox}/read?recipient=ada", None),
+    ("b", "POST", "/api/v1/inbox/{inbox}/unread?recipient=ada", None),
+    ("b", "POST", "/api/v1/inbox/{inbox}/archive?recipient=ada", None),
+    ("b", "POST", "/api/v1/inbox/{inbox}/unarchive?recipient=ada", None),
     ("b_admin", "DELETE", "/api/v1/tenant/api-keys/{api_key}", None),
     ("b_admin", "POST", "/api/v1/tenant/api-keys/{api_key}/rotate", None),
     ("b_admin", "DELETE", "/api/v1/tenant/members/{membership}", None),
@@ -312,6 +323,20 @@ async def test_a_stream_never_replays_another_tenants_notifications(iso, monkeyp
     assert seen["ids"] == []
 
 
+async def test_the_same_recipient_name_in_another_tenant_sees_and_changes_nothing_of_as_inbox(iso):
+    # B has its own "ada": a different person who happens to share the name.
+    await iso.b.post("/api/v1/devices", json={"external_ref": "ada", "platform": "android", "token": "b-ada-token"})
+    inbox = "/api/v1/inbox"
+    assert (await iso.b.get(inbox, params={"recipient": "ada", "state": "all"})).json()["items"] == []
+    assert (await iso.b.get(f"{inbox}/unread-count", params={"recipient": "ada"})).json() == {"unread_count": 0}
+    assert (await iso.b.post(f"{inbox}/{iso.ids['inbox']}/read", params={"recipient": "ada"})).status_code == 404
+    assert (await iso.b.post(f"{inbox}/read-all", params={"recipient": "ada"})).json()["changed"] == 0
+
+    mine = (await iso.a.get(inbox, params={"recipient": "ada"})).json()
+    assert [m["body"] for m in mine["items"]] == ["a's secret message"] and mine["unread_count"] == 1
+    assert mine["items"][0]["is_read"] is False
+
+
 # ── who is allowed to say "I am tenant X" ──────────────────────────────
 
 
@@ -419,6 +444,10 @@ COVERED = {
     ("GET", "/api/v1/providers"), ("GET", "/api/v1/providers/health"), ("GET", "/api/v1/workflows"),
     ("GET", "/api/v1/templates"), ("GET", "/api/v1/metrics"), ("GET", "/api/v1/tenant/api-keys"),
     ("GET", "/api/v1/tenant/members"), ("GET", "/api/v1/tenant/usage"),
+    # inbox: resource routes in ATTACKS; list/count/read-all in the inbox tests below
+    ("POST", "/api/v1/inbox/{message_id}/read"), ("POST", "/api/v1/inbox/{message_id}/unread"),
+    ("POST", "/api/v1/inbox/{message_id}/archive"), ("POST", "/api/v1/inbox/{message_id}/unarchive"),
+    ("GET", "/api/v1/inbox"), ("GET", "/api/v1/inbox/unread-count"), ("POST", "/api/v1/inbox/read-all"),
     # creates / writes that land in the caller's tenant
     ("POST", "/api/v1/providers"), ("POST", "/api/v1/templates"), ("POST", "/api/v1/workflows"),
     ("POST", "/api/v1/events"), ("POST", "/api/v1/devices"), ("PUT", "/api/v1/preferences"),
