@@ -12,12 +12,16 @@ from jobqueue.dispatch_guard import RedisDispatchGuard
 from jobqueue.producer import ArqJobPublisher
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.delivery_service import DeliveryService
+from telemetry.metrics import configure_metrics
 
 
-async def build_worker_context(ctx: dict[str, Any]) -> None:
+async def build_worker_context(ctx: dict[str, Any], name: str = "worker") -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
     ctx["settings"] = settings
+    ctx["telemetry"] = configure_metrics(
+        settings.otel, service_name=f"pulse-{name}-worker"
+    )
 
     database = Database(settings.database)
     await database.initialize()
@@ -38,4 +42,6 @@ async def build_worker_context(ctx: dict[str, Any]) -> None:
 
 
 async def teardown_worker_context(ctx: dict[str, Any]) -> None:
+    if ctx.get("telemetry") is not None:
+        ctx["telemetry"].shutdown()
     await ctx["database"].shutdown()

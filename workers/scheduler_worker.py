@@ -21,6 +21,13 @@ from services.notification_service import NotificationService
 from services.reconciliation_service import ReconciliationService
 from services.rendering_service import RenderingService
 from services.scheduling_service import SchedulingService
+from telemetry.metrics import (
+    OperationsCollector,
+    build_queue_depth_fn,
+    build_snapshot_fn,
+    configure_metrics,
+)
+from jobqueue.producer import EMAIL_QUEUE, PUSH_QUEUE, SMS_QUEUE
 from workflows.registry import WorkflowRegistry
 
 SCHEDULE_POLL_SECONDS = 5.0
@@ -32,6 +39,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     settings = get_settings()
 
+    telemetry = configure_metrics(settings.otel, service_name="pulse-scheduler")
     database = Database(settings.database)
     await database.initialize()
     pool = await create_arq_pool(settings.redis)
@@ -105,6 +113,16 @@ async def main() -> None:
             except asyncio.TimeoutError:
                 pass
 
+    collector_task = None
+    if telemetry is not None:
+        collector = OperationsCollector(
+            telemetry.meter,
+            snapshot=build_snapshot_fn(uow_factory, settings.reconciliation),
+            queue_depths=build_queue_depth_fn(pool, (EMAIL_QUEUE, PUSH_QUEUE, SMS_QUEUE)),
+            refresh_seconds=settings.otel.gauge_refresh_seconds,
+        )
+        collector_task = asyncio.create_task(collector.run(stop))
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
@@ -117,7 +135,9 @@ async def main() -> None:
     ]
     await stop.wait()
     relay.stop()
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, *([collector_task] if collector_task else []))
+    if telemetry is not None:
+        telemetry.shutdown()
     await pool.aclose()
     await database.shutdown()
 
