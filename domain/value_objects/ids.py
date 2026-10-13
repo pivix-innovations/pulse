@@ -79,6 +79,11 @@ class DeviceTokenId(_Id):
 
 
 @dataclass(frozen=True, slots=True)
+class InboxMessageId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class OutboxEntryId(_Id):
     pass
 

@@ -10,6 +10,7 @@ from database.models.identity import (
     TenantModel,
     UserModel,
 )
+from database.models.inbox import InboxMessageModel
 from database.models.notification import NotificationModel
 from database.models.outbox import OutboxEntryModel
 from database.models.preference import PreferenceModel
@@ -26,6 +27,7 @@ __all__ = [
     "DeliveryAttemptModel",
     "DeviceTokenModel",
     "EventModel",
+    "InboxMessageModel",
     "MembershipModel",
     "NotificationModel",
     "OutboxEntryModel",
