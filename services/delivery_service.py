@@ -11,6 +11,7 @@ from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.inbox import InboxMessage
 from domain.entities.provider_call import ProviderCall
+from telemetry.log_context import bind, update_current
 from telemetry.metrics import get_metrics
 from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import (
@@ -98,11 +99,16 @@ class DeliveryService:
         self._breaker = breaker
 
     async def deliver(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> str:
+        with bind(tenant_id=tenant_id, attempt_id=attempt_id):
+            return await self._deliver(tenant_id, attempt_id)
+
+    async def _deliver(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> str:
         async with self._uow_factory() as uow:
             attempt = await uow.delivery_attempts.get(tenant_id, attempt_id)
             if attempt is None:
                 logger.warning("Delivery attempt %s not found; dropping job", attempt_id)
                 return "missing"
+            update_current(notification_id=attempt.notification_id)
             if attempt.status not in (DeliveryStatus.PENDING, DeliveryStatus.RETRYING):
                 return "skipped"
 

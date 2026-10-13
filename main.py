@@ -41,6 +41,7 @@ from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
 from services.unsubscribe import UnsubscribeLinks
 from sse.registry import SseConnectionRegistry
+from telemetry.log_context import configure_logging
 from telemetry.metrics import configure_metrics, get_metrics
 from telemetry.router import router as telemetry_router
 from workflows.registry import WorkflowRegistry
@@ -49,6 +50,7 @@ from workflows.registry import WorkflowRegistry
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    configure_logging(settings.logging)
 
     # startup
     app.state.settings = settings

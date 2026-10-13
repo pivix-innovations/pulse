@@ -19,6 +19,7 @@ from domain.value_objects.ids import (
 from services.ports.clients import ResolvedRecipient, SentinelClient
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.attempts import attempts_for, build_attempt, outbox_entries
+from telemetry.log_context import bind, update_current
 from telemetry.metrics import get_metrics
 from services.rendering_service import RenderingService
 from services.sequence_service import SequenceEngine
@@ -70,6 +71,10 @@ class NotificationService:
         self._sequences = SequenceEngine(rendering)
 
     async def process_event(self, tenant_id: TenantId, incoming: IncomingEvent) -> NotificationId:
+        with bind(tenant_id=tenant_id):
+            return await self._process_event(tenant_id, incoming)
+
+    async def _process_event(self, tenant_id: TenantId, incoming: IncomingEvent) -> NotificationId:
         # Idempotent ingress: same key -> same notification, no new fan-out.
         # Checked first so a re-sent event is answered without calling Sentinel
         # (which may be down) and without paying for another lookup.
@@ -115,6 +120,7 @@ class NotificationService:
                 scheduled_at=incoming.scheduled_at,
             )
             await uow.notifications.add(notification)
+            update_current(notification_id=notification.id)
 
             now = datetime.now(timezone.utc)
             if incoming.scheduled_at is not None and incoming.scheduled_at > now:

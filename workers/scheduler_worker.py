@@ -24,6 +24,7 @@ from services.unsubscribe import UnsubscribeLinks
 from services.digest_service import DigestFlusher
 from services.scheduling_service import SchedulingService
 from services.sequence_service import SequenceEngine, StepRunner
+from telemetry.log_context import configure_logging
 from telemetry.metrics import (
     OperationsCollector,
     build_queue_depth_fn,
@@ -39,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO)
     settings = get_settings()
+    configure_logging(settings.logging)
 
     telemetry = configure_metrics(settings.otel, service_name="pulse-scheduler")
     database = Database(settings.database)

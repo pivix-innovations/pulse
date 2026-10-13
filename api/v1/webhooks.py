@@ -13,6 +13,7 @@ from providers.webhooks import WebhookParseError, known_provider, parse_webhook
 from domain.value_objects.ids import InvalidIdError, ProviderId
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.secrets import SecretBox, SecretsDecryptionError, SecretsNotConfigured
+from telemetry.log_context import update_current
 from services.receipts import apply_delivery_update, suppress_attempt_address
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -82,6 +83,10 @@ async def saved_provider_webhook(
             attempt = await uow.delivery_attempts.get_by_provider_message_id(
                 provider.tenant_id, provider.id, event.provider_message_id, for_update=True
             )
+            if attempt is not None:
+                update_current(
+                    tenant_id=attempt.tenant_id, notification_id=attempt.notification_id, attempt_id=attempt.id
+                )
             if attempt is not None and event.suppress:
                 await suppress_attempt_address(uow, attempt, event.suppress, event.reason)
             # Unknown ids are normal (the account also sends mail Pulse doesn't

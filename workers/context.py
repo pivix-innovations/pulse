@@ -1,7 +1,6 @@
 """Shared bootstrap for arq worker processes."""
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from config.loader import get_settings
@@ -12,12 +11,13 @@ from jobqueue.dispatch_guard import RedisDispatchGuard
 from jobqueue.producer import ArqJobPublisher
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.delivery_service import DeliveryService
+from telemetry.log_context import configure_logging
 from telemetry.metrics import configure_metrics
 
 
 async def build_worker_context(ctx: dict[str, Any], name: str = "worker") -> None:
-    logging.basicConfig(level=logging.INFO)
     settings = get_settings()
+    configure_logging(settings.logging)
     ctx["settings"] = settings
     ctx["telemetry"] = configure_metrics(
         settings.otel, service_name=f"pulse-{name}-worker"

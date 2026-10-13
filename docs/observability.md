@@ -66,3 +66,10 @@ so each series has one writer. Names appear in OpenObserve with dots as undersco
   A failing refresh is logged and retried; the last values keep being reported.
 - Counters reset when a process restarts; use `rate()`/`increase()`, which handle resets.
 - `tenant` is a label only on `pulse.events.ingested`. Tenants are a bounded set; don't add per-recipient labels.
+
+## Log correlation
+
+Every log line written while Pulse ingests an event, delivers an attempt or applies a provider receipt carries
+`tenant_id`, `notification_id` and `attempt_id` (JSON keys, or `[tenant=… notification=… attempt=…]` in text mode;
+`PULSE_LOGGING__JSON=false` selects text). Filter on `notification_id` to follow one message from ingest through the
+worker to its receipt. Code binds ids with `telemetry.log_context.bind(...)` / `update_current(...)`.
