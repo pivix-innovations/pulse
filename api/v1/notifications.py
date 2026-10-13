@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from api.dependencies import get_uow, require_scope
-from api.v1.schemas import DeliveryAttemptOut, NotificationOut, NotificationSummaryOut
+from api.v1.schemas import DeliveryAttemptOut, NotificationOut, NotificationSummaryOut, StepRunOut
 from domain.enums import DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import DeliveryAttemptId, NotificationId, TenantId
 from repositories.uow import SqlAlchemyUnitOfWork
@@ -92,6 +92,7 @@ async def get_notification(
         if notification is None:
             raise HTTPException(status_code=404, detail="Notification not found")
         attempts = await uow.delivery_attempts.list_for_notification(tenant_id, notification.id)
+        step_runs = await uow.step_runs.list_for_notification(tenant_id, notification.id)
 
     return NotificationOut(
         id=notification.id.value,
@@ -114,5 +115,13 @@ async def get_notification(
                 awaiting_confirmation=a.status is DeliveryStatus.SENT and a.expects_confirmation,
             )
             for a in attempts
+        ],
+        steps=[
+            StepRunOut(
+                recipient_id=r.recipient_id.value, step_id=r.step_id, step_index=r.step_index,
+                status=r.status.value, run_at=r.run_at, executed_at=r.executed_at,
+                attempt_id=r.attempt_id.value if r.attempt_id else None, reason=r.reason,
+            )
+            for r in step_runs
         ],
     )

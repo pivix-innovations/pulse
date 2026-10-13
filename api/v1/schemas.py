@@ -40,6 +40,19 @@ class DeliveryAttemptOut(BaseModel):
     awaiting_confirmation: bool = False
 
 
+class StepRunOut(BaseModel):
+    """Where one recipient is in a multi-step workflow."""
+
+    recipient_id: uuid.UUID
+    step_id: str
+    step_index: int
+    status: str            # scheduled | done | skipped
+    run_at: datetime
+    executed_at: datetime | None = None
+    attempt_id: uuid.UUID | None = None
+    reason: str | None = None   # why a step was skipped
+
+
 class NotificationOut(BaseModel):
     id: uuid.UUID
     status: NotificationStatus
@@ -47,6 +60,7 @@ class NotificationOut(BaseModel):
     workflow_id: uuid.UUID
     created_at: datetime | None
     attempts: list[DeliveryAttemptOut]
+    steps: list[StepRunOut] = []
 
 
 class NotificationSummaryOut(BaseModel):

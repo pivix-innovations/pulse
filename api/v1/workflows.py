@@ -48,6 +48,13 @@ def _validate_definition(body: WorkflowIn) -> None:
         parsed = WorkflowDefinition.from_dict(body.name, body.event_type, body.definition)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid workflow definition: {exc}")
+    if parsed.is_sequence:
+        if parsed.channels or parsed.fallbacks or parsed.fallback_templates:
+            raise HTTPException(
+                status_code=422,
+                detail="A workflow uses either 'steps' or 'channels' with fallbacks, not both",
+            )
+        return
     if not parsed.channels:
         raise HTTPException(status_code=422, detail="Workflow definition needs at least one channel")
     known = {ct.channel.value for ct in (*parsed.channels, *parsed.fallback_templates)}
