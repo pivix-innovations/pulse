@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
@@ -12,6 +12,7 @@ from api.dependencies import get_secret_box, get_uow, require_tenant
 from domain.entities.provider import Provider
 from domain.enums import ChannelType
 from domain.value_objects.ids import ProviderId, TenantId
+from providers.receipts import supports_receipts, webhook_path, webhook_url
 from providers.catalog import ProviderSpec, get_spec, list_specs
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.secrets import SecretBox, SecretsDecryptionError, SecretsNotConfigured
@@ -115,9 +116,16 @@ class ProviderOut(BaseModel):
     priority: int
     is_active: bool
     catalog: dict[str, Any] | None
+    # Where this provider should send delivery receipts, when it supports them.
+    webhook_path: str | None = None
+    webhook_url: str | None = None
     used_by: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime | None
     updated_at: datetime | None
+
+
+def get_public_url(request: Request) -> str | None:
+    return request.app.state.settings.api.public_url
 
 
 def _stored_secrets(box: SecretBox, p: Provider) -> dict[str, Any]:
@@ -128,7 +136,10 @@ def _stored_secrets(box: SecretBox, p: Provider) -> dict[str, Any]:
 
 
 def _out(
-    p: Provider, box: SecretBox, used_by: list[dict[str, Any]] | None = None
+    p: Provider,
+    box: SecretBox,
+    used_by: list[dict[str, Any]] | None = None,
+    public_url: str | None = None,
 ) -> ProviderOut:
     spec = get_spec(p.channel, p.name)
     return ProviderOut(
@@ -144,6 +155,10 @@ def _out(
             {"name": spec.name, "logo_url": spec.public()["logo_url"], "builtin": spec.builtin}
             if spec
             else None
+        ),
+        webhook_path=webhook_path(p.id) if spec and supports_receipts(spec.id) else None,
+        webhook_url=(
+            webhook_url(public_url, p.id) if spec and supports_receipts(spec.id) else None
         ),
         used_by=used_by or [],
         created_at=p.created_at,
@@ -186,6 +201,7 @@ async def create_provider(
     tenant_id: TenantId = Depends(require_tenant),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
+    public_url: str | None = Depends(get_public_url),
 ) -> ProviderOut:
     spec = _spec_or_422(body.channel, body.name)
     try:
@@ -208,7 +224,7 @@ async def create_provider(
     async with uow:
         await uow.providers.add(provider)
         await uow.commit()
-        return _out(await uow.providers.get(tenant_id, provider.id), box)
+        return _out(await uow.providers.get(tenant_id, provider.id), box, public_url=public_url)
 
 
 @router.get("", response_model=list[ProviderOut])
@@ -217,12 +233,13 @@ async def list_providers(
     tenant_id: TenantId = Depends(require_tenant),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
+    public_url: str | None = Depends(get_public_url),
 ) -> list[ProviderOut]:
     async with uow:
         providers = await uow.providers.list(tenant_id)
         usage = _workflow_usage(await uow.workflows.list(tenant_id))
     return [
-        _out(p, box, usage.get(str(p.id)))
+        _out(p, box, usage.get(str(p.id)), public_url)
         for p in providers
         if channel is None or p.channel is channel
     ]
@@ -234,13 +251,14 @@ async def get_provider(
     tenant_id: TenantId = Depends(require_tenant),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
+    public_url: str | None = Depends(get_public_url),
 ) -> ProviderOut:
     async with uow:
         provider = await uow.providers.get(tenant_id, ProviderId(provider_id))
         usage = _workflow_usage(await uow.workflows.list(tenant_id))
     if provider is None:
         raise HTTPException(status_code=404, detail="Provider not found")
-    return _out(provider, box, usage.get(str(provider.id)))
+    return _out(provider, box, usage.get(str(provider.id)), public_url)
 
 
 @router.put("/{provider_id}", response_model=ProviderOut)
@@ -250,6 +268,7 @@ async def update_provider(
     tenant_id: TenantId = Depends(require_tenant),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
     box: SecretBox = Depends(get_secret_box),
+    public_url: str | None = Depends(get_public_url),
 ) -> ProviderOut:
     spec = _spec_or_422(body.channel, body.name)
     async with uow:
@@ -292,7 +311,7 @@ async def update_provider(
         )
         await uow.providers.update(updated)
         await uow.commit()
-        return _out(await uow.providers.get(tenant_id, existing.id), box)
+        return _out(await uow.providers.get(tenant_id, existing.id), box, public_url=public_url)
 
 
 @router.delete("/{provider_id}", status_code=204)
