@@ -54,7 +54,8 @@
 | E2c | Cancel a running sequence | Low | S | Stop remaining steps for a notification (API + console button). |
 | E3 | Digest / batching ✅ | Medium | L | `digest` step with time windows or thresholds; buffer table plus a consolidated render. |
 | E3b | Digest extras: rolling windows, daily-at-9am schedule, per-channel digests | Low | M | Today the window is fixed from the first event and covers every channel of the workflow. |
-| E4 | Template versioning & preview | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
+| E4 | Template versioning & preview ✅ | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
+| E4b | Template diff view and per-version usage | Low | S | Show a text diff between versions in the console; record which version each message was rendered from. |
 | E5 | Subscriber preference center | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. |
 | E6 | Chat channels (Slack/Teams webhook) | Low | M | New `Channel` enum value plus worker. |
 

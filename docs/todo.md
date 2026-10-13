@@ -2,10 +2,10 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 539 passing, 120 skipped by default (`pytest`; the skips need infrastructure: e2e and Redis tests with `PULSE_E2E=1`, Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 658 passed)  
+> **Test Suite**: 594 passing, 134 skipped by default (`pytest`; the skips need infrastructure: e2e and Redis tests with `PULSE_E2E=1`, Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 727 passed)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
-> **Schema Migrations**: Linear head `d1e3f5a7b280` (15 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
+> **Schema Migrations**: Linear head `e5f2a4b6c391` (16 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
 
 ---
 
@@ -80,7 +80,7 @@
 | **E1** | Persistent In-App Inbox Center | High | L | **[x] DONE** | `inbox_messages` table written when an in-app attempt is dispatched (idempotent per attempt); `GET /inbox` (state filter, cursor paging, unread count), `/inbox/unread-count`, `POST /inbox/{id}/read\|unread\|archive\|unarchive`, `POST /inbox/read-all`; `client` scope. Reading confirms delivery. An offline recipient is no longer a failure. See `docs/inbox.md`. |
 | **E2** | Multi-Step Workflows | High | L | **[x] DONE** | Ordered steps with delays and conditions (previous/earlier step unread, delivered, failed, skipped; payload checks), per recipient, run by the scheduler. A linear sequence with conditions rather than a general DAG: no parallel branches or loops. Persisted as `workflow_step_runs`; see `docs/sequences.md`. |
 | **E3** | Event Digest & Batching Engine | Medium | L | **[x] DONE** | Workflow `digest` (window, max_items, optional group-by key): events buffer per recipient in `digest_batches`/`digest_items`, and the scheduler sends one consolidated message (templates get `digest.count/items/first/last`). Fixed windows only, no daily-at-9am schedules yet. See `docs/digests.md`. Also fixed: concurrent first events for a new recipient returned 409. |
-| **E4** | Template Versioning & Preview | Medium | M | **[ ] OPEN** | Template draft/publish workflows with `POST /templates/{id}/preview` test render. |
+| **E4** | Template Versioning & Preview | Medium | M | **[x] DONE** | Saved templates have a draft and numbered published versions (publish, rollback as a forward copy, history); workflows reference a template by name and send its published version, in the recipient's locale; `POST /templates/{id}/preview` (draft, published or any version, optional digest simulation) and an unsaved-text preview. Previously saved templates were not used by anything; existing ones become published v1. See `docs/templates.md`. |
 | **E5** | Preference Center & Unsubscribe | Medium | M | **[ ] OPEN** | Self-service subscriber portal for category-based opt-outs. |
 | **E6** | Chat Channels (Slack / Teams / Discord) | Low | M | **[ ] OPEN** | Native chat channel drivers and webhook worker. |
 
@@ -109,7 +109,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **539 passing tests** (658 with infrastructure) in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **594 passing tests** (727 with infrastructure) in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
