@@ -96,6 +96,9 @@ async def iso(world):
     r = await a.put("/api/v1/preferences", json={"external_ref": "ada", "channel": "sms", "opted_in": False})
     assert r.status_code == 200, r.text
     ids["preference"] = r.json()["id"]
+    r = await a.post("/api/v1/suppressions", json={"channel": "email", "address": "blocked@example.com"})
+    assert r.status_code == 201, r.text
+    ids["suppression"] = r.json()["id"]
     r = await a.post("/api/v1/events", json={**EVENT, "idempotency_key": "shared-key"})
     assert r.status_code == 202, r.text
     ids["notification"] = r.json()["notification_id"]
@@ -151,6 +154,7 @@ ATTACKS = [
     ("b", "POST", "/api/v1/templates/{template}/preview", {"data": {}}),
     ("b", "DELETE", "/api/v1/preferences/{preference}", None),
     ("b", "GET", "/api/v1/preferences?recipient=ada", None),   # B has no recipient "ada"
+    ("b", "DELETE", "/api/v1/suppressions/{suppression}", None),
     ("b", "POST", "/api/v1/dead-letters/{dead_letter}/retry", None),
     ("b", "POST", "/api/v1/inbox/{inbox}/read?recipient=ada", None),
     ("b", "POST", "/api/v1/inbox/{inbox}/unread?recipient=ada", None),
@@ -192,6 +196,8 @@ async def test_after_every_attack_tenant_a_is_untouched(iso):
     assert (await a.get(f"/api/v1/templates/{ids['template']}")).json()["body"] == "A body"
     assert len((await a.get("/api/v1/preferences", params={"recipient": "ada"})).json()) == 1
     assert len((await a.get("/api/v1/dead-letters")).json()) == 1
+    assert [x["address"] for x in (await a.get("/api/v1/suppressions")).json()] == ["blocked@example.com"]
+    assert (await iso.b.get("/api/v1/suppressions")).json() == []
     assert (await a.get(f"/api/v1/notifications/{ids['notification']}")).json()["attempts"][0]["status"] == "pending"
     keys = {k["id"]: k for k in (await iso.a_admin.get("/api/v1/tenant/api-keys")).json()}
     assert keys[ids["api_key"]]["is_active"] is True
@@ -445,6 +451,7 @@ COVERED = {
     ("POST", "/api/v1/templates/{template_id}/publish"), ("POST", "/api/v1/templates/{template_id}/rollback"),
     ("POST", "/api/v1/templates/{template_id}/preview"),
     ("DELETE", "/api/v1/preferences/{preference_id}"), ("GET", "/api/v1/preferences"),
+    ("DELETE", "/api/v1/suppressions/{suppression_id}"), ("GET", "/api/v1/suppressions"),   # list: asserted after the attacks
     ("POST", "/api/v1/dead-letters/{dead_letter_id}/retry"), ("DELETE", "/api/v1/tenant/api-keys/{key_id}"),
     ("DELETE", "/api/v1/tenant/members/{membership_id}"), ("POST", "/api/v1/tenant/api-keys/{key_id}/rotate"),
     # lists and aggregates
@@ -458,6 +465,7 @@ COVERED = {
     ("GET", "/api/v1/inbox"), ("GET", "/api/v1/inbox/unread-count"), ("POST", "/api/v1/inbox/read-all"),
     # creates / writes that land in the caller's tenant
     ("POST", "/api/v1/templates/preview"),   # renders what the caller sends; touches no stored data
+    ("POST", "/api/v1/suppressions"),
     ("POST", "/api/v1/providers"), ("POST", "/api/v1/templates"), ("POST", "/api/v1/workflows"),
     ("POST", "/api/v1/events"), ("POST", "/api/v1/devices"), ("PUT", "/api/v1/preferences"),
     ("POST", "/api/v1/tenant/api-keys"), ("POST", "/api/v1/tenant/members"),

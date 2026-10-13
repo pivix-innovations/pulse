@@ -49,6 +49,9 @@ class PulseMetrics:
         self.digest_items = meter.create_counter(
             "pulse.digest.items", unit="{event}", description="Events buffered into a digest"
         )
+        self.suppressed_sends = meter.create_counter(
+            "pulse.suppressed_sends", unit="{send}", description="Sends skipped because the address is suppressed"
+        )
         self.digest_flushes = meter.create_counter(
             "pulse.digest.flushes", unit="{digest}", description="Digests sent (outcome: sent/failed)"
         )

@@ -220,6 +220,13 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
 - **Signed delivery webhooks:** vendors call back with delivered/bounced/failed. Pulse verifies each vendor's
   signature (Twilio, Resend, SendGrid, SES via SNS) so callbacks cannot be forged.
 - **Acknowledgements:** client apps can ack a message, e.g. when a push was shown.
+- **Suppression list (`/api/v1/suppressions`):** a permanent bounce, a spam complaint (SES, Resend, SendGrid), an
+  unsubscribe or a Twilio STOP reply (error 21610) adds the email address or phone number to the tenant's suppression
+  list. Later sends to that address on that channel are skipped, whichever recipient or workflow they come from; other
+  channels still go out. Admins can also add or remove entries by hand. Addresses are matched case-insensitively
+  (email) and without spaces (phone). The `pulse.suppressed_sends` metric counts skips.
+  - **Business value:** protects sender reputation (repeated sends to dead addresses get a domain blocked) and honours
+    opt-outs the vendor has already recorded.
 - **Business value:** answers "did the customer get it?" without opening a vendor dashboard. Bounces are known quickly
   and drive escalation: an email that bounced triggers the fallback, not a silent miss.
 - **Useful when:** support investigates a complaint; audits; any message where proof of delivery matters.

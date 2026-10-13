@@ -8,9 +8,11 @@ from domain.entities.delivery import DeliveryAttempt
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
+from domain.enums import ChannelType
 from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId
 from services.ports.uow import UnitOfWork
 from services.templates import resolve
+from telemetry.metrics import get_metrics
 from services.rendering_service import RenderingService
 from workflows.channel_template import ChannelTemplate
 
@@ -77,6 +79,14 @@ def outbox_entries(notification: Notification, attempts: Sequence[DeliveryAttemp
     ]
 
 
+def _address_for(recipient: Recipient, channel: ChannelType) -> str | None:
+    if channel is ChannelType.EMAIL:
+        return recipient.email
+    if channel is ChannelType.SMS:
+        return recipient.phone
+    return None
+
+
 async def attempts_for(
     uow: UnitOfWork,
     rendering: RenderingService,
@@ -95,6 +105,10 @@ async def attempts_for(
     attempts = []
     for template in templates:
         if template.channel in opted_out:
+            continue
+        address = _address_for(recipient, template.channel)
+        if address and await uow.suppressions.is_suppressed(notification.tenant_id, template.channel, address):
+            get_metrics().suppressed_sends.add(1, {"channel": template.channel.value})
             continue
         template = await resolve(uow, notification.tenant_id, template, recipient.locale)
         attempt = build_attempt(rendering, notification, recipient, template, payload=payload, extra=extra)

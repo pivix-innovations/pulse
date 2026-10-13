@@ -85,10 +85,19 @@ async def test_permanent_bounce_fails_and_carries_the_diagnostic(keypair):
     assert e.delivered is False and "550 no such user" in e.reason
 
 
-async def test_transient_bounce_complaint_and_send_events_are_not_final(keypair):
+async def test_permanent_bounce_and_complaint_suppress_the_address(keypair):
+    bounce = ses_event("Bounce", bounce={"bounceType": "Permanent"})
+    [b] = await receive(signed(keypair[0], bounce))
+    assert b.suppress == "bounce"
+    # A complaint arrives after delivery, so it confirms delivery and flags the address.
+    [c] = await receive(signed(keypair[0], ses_event("Complaint")))
+    assert c.delivered is True and c.suppress == "complaint"
+
+
+async def test_transient_bounce_and_send_events_are_not_final(keypair):
     for event in (
         ses_event("Bounce", bounce={"bounceType": "Transient"}),
-        ses_event("Complaint"), ses_event("Send"), ses_event("DeliveryDelay"),
+        ses_event("Send"), ses_event("DeliveryDelay"),
     ):
         assert await receive(signed(keypair[0], event)) == []
 

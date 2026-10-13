@@ -18,6 +18,7 @@ from database.models.preference import PreferenceModel
 from database.models.provider import ProviderModel
 from database.models.provider_call import ProviderCallModel
 from database.models.recipient import RecipientModel
+from database.models.suppression import SuppressionModel
 from database.models.template import TemplateModel, TemplateVersionModel
 from database.models.step_run import WorkflowStepRunModel
 from database.models.workflow import WorkflowModel
@@ -40,6 +41,7 @@ __all__ = [
     "ProviderModel",
     "RecipientModel",
     "SessionModel",
+    "SuppressionModel",
     "TemplateModel",
     "TemplateVersionModel",
     "TenantModel",

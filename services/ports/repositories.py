@@ -19,10 +19,12 @@ from domain.entities.provider import Provider
 from domain.entities.provider_call import ProviderCall
 from domain.entities.recipient import Recipient
 from domain.entities.step_run import StepRun
+from domain.entities.suppression import Suppression
 from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import (
+    SuppressionId,
     DeliveryAttemptId,
     ApiKeyId,
     DeadLetterId,
@@ -147,6 +149,20 @@ class PreferenceRepository(Protocol):
     async def upsert(self, preference: Preference) -> None: ...
 
     async def delete(self, tenant_id: TenantId, preference_id: PreferenceId) -> bool: ...
+
+
+class SuppressionRepository(Protocol):
+    """Persistence port for addresses Pulse must not send to."""
+
+    async def add(self, suppression: Suppression) -> bool:
+        """Idempotent; False when the address was already suppressed."""
+        ...
+
+    async def is_suppressed(self, tenant_id: TenantId, channel: ChannelType, address: str) -> bool: ...
+
+    async def list(self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0) -> list[Suppression]: ...
+
+    async def delete(self, tenant_id: TenantId, suppression_id: SuppressionId) -> bool: ...
 
 
 class EventRepository(Protocol):

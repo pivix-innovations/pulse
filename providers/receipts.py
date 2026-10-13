@@ -34,6 +34,8 @@ class ReceiptEvent:
     provider_message_id: str
     delivered: bool  # False -> bounced / undelivered / failed
     reason: str | None = None
+    # Set when the address itself is bad ("bounce"), complained or opted out: it gets suppressed.
+    suppress: str | None = None
 
 
 def webhook_path(provider_id: ProviderId | str) -> str:
@@ -83,7 +85,10 @@ def parse_twilio(
         return [ReceiptEvent(sid, True)]
     if status in _TWILIO_FAILED:
         code = data.get("ErrorCode")
-        return [ReceiptEvent(sid, False, f"Twilio {status}" + (f" (error {code})" if code else ""))]
+        return [ReceiptEvent(
+            sid, False, f"Twilio {status}" + (f" (error {code})" if code else ""),
+            suppress="unsubscribe" if code == "21610" else None,
+        )]
     return []  # queued / sending / sent: not final
 
 
@@ -121,8 +126,13 @@ def parse_resend(
         raise ReceiptParseError("Unexpected Resend payload")
     if kind == "email.delivered":
         return [ReceiptEvent(email_id, True)]
+    if kind == "email.complained":
+        return [ReceiptEvent(email_id, True, "Resend complaint", suppress="complaint")]
     if kind in _RESEND_FAILED:
-        return [ReceiptEvent(email_id, False, f"Resend {_RESEND_FAILED[kind]}")]
+        return [ReceiptEvent(
+            email_id, False, f"Resend {_RESEND_FAILED[kind]}",
+            suppress="bounce" if kind in ("email.bounced", "email.suppressed") else None,
+        )]
     return []  # sent / delivery_delayed / opened / clicked ...
 
 
@@ -166,7 +176,12 @@ def parse_sendgrid(
             out.append(ReceiptEvent(mid, True))
         elif kind in _SENDGRID_FAILED:
             reason = e.get("reason") or _SENDGRID_FAILED[kind]
-            out.append(ReceiptEvent(mid, False, f"SendGrid {_SENDGRID_FAILED[kind]}: {reason}"[:300]))
+            out.append(ReceiptEvent(
+                mid, False, f"SendGrid {_SENDGRID_FAILED[kind]}: {reason}"[:300],
+                suppress="bounce" if kind == "bounce" else None,
+            ))
+        elif kind in ("spamreport", "unsubscribe"):
+            out.append(ReceiptEvent(mid, True, f"SendGrid {kind}", suppress="complaint" if kind == "spamreport" else "unsubscribe"))
     return out
 
 
@@ -224,11 +239,15 @@ async def parse_ses(
         bounce = event.get("bounce", {})
         if bounce.get("bounceType") == "Permanent":
             detail = (bounce.get("bouncedRecipients") or [{}])[0].get("diagnosticCode", "")
-            return [ReceiptEvent(mail_id, False, f"SES permanent bounce: {detail}".strip(": ")[:300])]
+            return [ReceiptEvent(
+                mail_id, False, f"SES permanent bounce: {detail}".strip(": ")[:300], suppress="bounce"
+            )]
         return []  # transient/undetermined: SES keeps trying
+    if etype == "Complaint":
+        return [ReceiptEvent(mail_id, True, "SES complaint", suppress="complaint")]
     if etype == "Reject":
         return [ReceiptEvent(mail_id, False, f"SES rejected: {event.get('reject', {}).get('reason', '')}"[:300])]
-    return []  # Send, Complaint (after delivery), DeliveryDelay, Open, Click ...
+    return []  # Send, DeliveryDelay, Open, Click ...
 
 
 Parser = Callable[..., list[ReceiptEvent]]

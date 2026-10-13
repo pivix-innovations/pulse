@@ -21,6 +21,7 @@ from services.ports.repositories import (
     RecipientRepository,
     SessionRepository,
     StepRunRepository,
+    SuppressionRepository,
     TemplateRepository,
     TenantRepository,
     UserRepository,
@@ -38,6 +39,7 @@ class UnitOfWork(Protocol):
     notifications: NotificationRepository
     delivery_attempts: DeliveryAttemptRepository
     preferences: PreferenceRepository
+    suppressions: SuppressionRepository
     events: EventRepository
     workflows: WorkflowRepository
     recipients: RecipientRepository

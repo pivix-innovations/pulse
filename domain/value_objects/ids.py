@@ -130,3 +130,8 @@ class ApiKeyId(_Id):
 @dataclass(frozen=True, slots=True)
 class SessionId(_Id):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class SuppressionId(_Id):
+    pass

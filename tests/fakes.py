@@ -17,12 +17,14 @@ from domain.entities.inbox import InboxMessage
 from domain.entities.step_run import StepRun, StepRunStatus
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
+from domain.entities.suppression import Suppression, normalize_address
 from domain.entities.provider import Provider
 from domain.entities.recipient import Recipient
 from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus, OutboxStatus
 from domain.value_objects.ids import (
+    SuppressionId,
     ApiKeyId,
     DeadLetterId,
     DeliveryAttemptId,
@@ -200,6 +202,33 @@ class InMemoryDeliveryAttemptRepository:
     async def update(self, attempt: DeliveryAttempt) -> None:
         attempt.updated_at = datetime.now(timezone.utc)
         self.items[str(attempt.id)] = attempt
+
+
+class InMemorySuppressionRepository:
+    def __init__(self) -> None:
+        self.items: list[Suppression] = []
+
+    async def add(self, suppression: Suppression) -> bool:
+        address = normalize_address(suppression.channel, suppression.address)
+        if await self.is_suppressed(suppression.tenant_id, suppression.channel, address):
+            return False
+        suppression.address = address
+        self.items.append(suppression)
+        return True
+
+    async def is_suppressed(self, tenant_id: TenantId, channel: ChannelType, address: str) -> bool:
+        address = normalize_address(channel, address)
+        return any(
+            s.tenant_id == tenant_id and s.channel == channel and s.address == address for s in self.items
+        )
+
+    async def list(self, tenant_id: TenantId, *, limit: int = 50, offset: int = 0) -> list[Suppression]:
+        return [s for s in reversed(self.items) if s.tenant_id == tenant_id][offset : offset + limit]
+
+    async def delete(self, tenant_id: TenantId, suppression_id: SuppressionId) -> bool:
+        before = len(self.items)
+        self.items = [s for s in self.items if not (s.tenant_id == tenant_id and s.id == suppression_id)]
+        return len(self.items) < before
 
 
 class InMemoryPreferenceRepository:
@@ -951,6 +980,7 @@ class InMemoryUnitOfWork:
         self.delivery_attempts = InMemoryDeliveryAttemptRepository()
         self.notifications = InMemoryNotificationRepository(self.delivery_attempts)
         self.preferences = InMemoryPreferenceRepository()
+        self.suppressions = InMemorySuppressionRepository()
         self.events = InMemoryEventRepository()
         self.workflows = InMemoryWorkflowRepository()
         self.recipients = InMemoryRecipientRepository()

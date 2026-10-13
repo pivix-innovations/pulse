@@ -21,7 +21,7 @@
 | B2 | Email: SES / Resend / SendGrid driver ✅ | High | M | SMTP is fire-and-forget; API drivers give bounce/delivery webhooks. |
 | B3 | Push: APNs (HTTP/2, `.p8` token) | Medium | M | FCM exists. |
 | B4 | Provider secrets handling ✅ | High | M | DB `providers.config` holds non-secret values only; add encrypted secret storage or a secret-manager reference. |
-| B5 | Bounce/complaint suppression list | Medium | M | Stop sending to hard-bounced addresses and unsubscribed numbers. |
+| B5 | Bounce/complaint suppression list ✅ | Medium | M | Stop sending to hard-bounced addresses and unsubscribed numbers. Console page and the unsubscribe link (E5) still to do. |
 
 ## Phase C — Security & Multi-Tenant Safety
 
