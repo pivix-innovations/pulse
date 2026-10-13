@@ -19,13 +19,16 @@ _THROTTLE_OR_OUTAGE = {
 _BAD_REQUEST = {"BadRequestException", "ValidationError", "InvalidParameterValue"}
 
 
-def build_client(region: str, access_key_id: str, secret_access_key: str) -> Any:
+def build_client(
+    region: str, access_key_id: str, secret_access_key: str, endpoint_url: str | None = None
+) -> Any:
     import boto3
     from botocore.config import Config
 
     return boto3.client(
         "sesv2",
         region_name=region,
+        endpoint_url=endpoint_url or None,
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key,
         # Retries are Pulse's job (visible, backed-off, failover-aware).
@@ -73,12 +76,13 @@ class SesEmailProvider(EmailProvider):
         from_address: str,
         configuration_set: str | None = None,
         receipts: bool = False,
+        endpoint_url: str | None = None,
         client: Any = None,
     ) -> None:
         self.confirms_delivery = receipts
         self._from = from_address
         self._configuration_set = configuration_set
-        self._client = client or build_client(region, access_key_id, secret_access_key)
+        self._client = client or build_client(region, access_key_id, secret_access_key, endpoint_url)
 
     def _send_sync(self, message: OutboundMessage) -> str:
         body: dict[str, Any] = {"Text": {"Data": message.body_text or " ", "Charset": "UTF-8"}}
@@ -107,10 +111,14 @@ class SesEmailProvider(EmailProvider):
 
 
 async def check_ses(
-    region: str, access_key_id: str, secret_access_key: str, client: Any = None
+    region: str,
+    access_key_id: str,
+    secret_access_key: str,
+    client: Any = None,
+    endpoint_url: str | None = None,
 ) -> tuple[bool, str]:
     def _probe() -> tuple[bool, str]:
-        c = client or build_client(region, access_key_id, secret_access_key)
+        c = client or build_client(region, access_key_id, secret_access_key, endpoint_url)
         try:
             account = c.get_account()
         except Exception as exc:

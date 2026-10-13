@@ -238,6 +238,7 @@ def _build_ses(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext)
         from_address=config["from_address"],
         configuration_set=config.get("configuration_set"),
         receipts=bool(config.get("sns_topic_arn")),
+        endpoint_url=config.get("endpoint_url"),
     )
 
 
@@ -276,7 +277,10 @@ async def _check_twilio(config: dict[str, Any], secrets: dict[str, Any]) -> tupl
 
 async def _check_ses(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
     return await check_ses(
-        config.get("region", "us-east-1"), secrets["access_key_id"], secrets["secret_access_key"]
+        config.get("region", "us-east-1"),
+        secrets["access_key_id"],
+        secrets["secret_access_key"],
+        endpoint_url=config.get("endpoint_url"),
     )
 
 
@@ -342,6 +346,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
                 help="Optional. Subscribe this provider's webhook URL (shown after saving) to the topic "
                 "to confirm delivery and catch bounces; Pulse confirms the subscription automatically.",
             ),
+            ConfigField("endpoint_url", "Custom endpoint", help="Optional. Only for SES-compatible endpoints such as LocalStack."),
             ConfigField("access_key_id", "Access key ID", secret=True, required=True),
             ConfigField("secret_access_key", "Secret access key", secret=True, required=True,
                         help="Grant the IAM user only ses:SendEmail (and ses:GetAccount to test)."),
