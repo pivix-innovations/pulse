@@ -74,9 +74,9 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | G3 | Saved providers (multiple instances per type) | High | M | [x] | `catalog_key` + `label` + `config` + encrypted secrets; schema validation against the catalog. |
 | G4 | Workflow provider chains | High | M | [x] | `definition.provider_chains = {channel: [provider_id, ...]}` ordered by priority; validated on write; providers in use can't be deleted. |
 | G5 | Failover inside a channel | High | M | [x] | Next provider only on hard errors and timeouts (never on sent-but-unconfirmed). When every provider in the channel fails, the existing channel fallback applies. |
-| G6 | Provider test-send / health check | Medium | S | [ ] | Validate credentials before attaching to a workflow. |
+| G6 | Provider connection test | Medium | S | [x] | `POST /provider-catalog/{channel}/{key}/test` (works on unsaved forms, reuses stored secrets); "Test connection" button in the console. Live check for SMTP, Twilio, Resend, SendGrid, FCM (dry run). |
 | G7 | Console UI: catalog grid with logos, configure form, drag-to-prioritise chain editor | High | L | [~] | Catalog picker, configure form and ↑/↓ chain editor shipped; drag-to-reorder and "test connection" still open. |
-| G8 | Twilio and SES catalog entries | High | M | [ ] | Same entry shape as G1. |
+| G8 | Real providers: Twilio, Resend, SendGrid, SES | High | M | [~] | Twilio, Resend and SendGrid done (httpx, error mapping to retry/failover semantics). SES open: needs boto3 for SigV4. Delivery receipts for all three still need webhook wiring, so `sent` is final for now. |
 
 ## Phase H — SSE & Push hardening
 
