@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="email-resend">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <path d="M20 46V18h13c6 0 10 3 10 8.500 0 4-2.500 6.800-6.500 7.800L44 46h-7l-6.500-10.500H26V46z M26 31h6.500c2.800 0 4.500-1.200 4.500-3.500S35.300 24 32.500 24H26z" fill="#fff" fill-rule="evenodd"/>
+</svg>
