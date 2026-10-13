@@ -147,6 +147,10 @@ lint: ## Lint (ruff) and type-check (ty)
 	$(UV) ruff check .
 	$(UV) ty check
 
+.PHONY: e2e
+e2e: infra-up ## End-to-end smoke + chaos tests on real Postgres/Redis (set PULSE_REDIS__PORT if 6380 is taken)
+	PULSE_E2E=1 $(UV) pytest tests/e2e -v
+
 .PHONY: fmt
 fmt: ## Format code (black + ruff --fix)
 	$(UV) black .
