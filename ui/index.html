@@ -1516,7 +1516,9 @@ const HEALTH_LOOK = {
 };
 function healthHtml(h) {
   if (!h) return "";
-  const look = HEALTH_LOOK[h.status] || HEALTH_LOOK.idle;
+  const look = h.circuit === "open" ? { color: "red", label: "paused · circuit open" }
+             : h.circuit === "half_open" ? { color: "amber", label: "testing recovery" }
+             : (HEALTH_LOOK[h.status] || HEALTH_LOOK.idle);
   const parts = [];
   if (h.success_rate !== null) parts.push(`${(h.success_rate * 100).toFixed(h.success_rate === 1 ? 0 : 1)}% of ${h.calls} calls ok`);
   if (h.p95_latency_ms !== null) parts.push(`p95 ${Math.round(h.p95_latency_ms)} ms`);
