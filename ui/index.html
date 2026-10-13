@@ -780,6 +780,17 @@ function renderSend(el) {
 
 /* ═══ Notification Lookup ═════════════════════════════════ */
 
+/* Which provider carried an attempt (with logo), plus any failover trail. */
+function providerCell(a, providersById) {
+  const p = a.provider_id ? providersById[a.provider_id] : null;
+  const who = p ? `${logoImg(p, "provider-logo")} ${esc(p.label)}`
+                : a.provider_id ? `<span class="muted">deleted provider</span>`
+                : a.status === "pending" || a.status === "retrying" ? `<span class="muted">—</span>`
+                : `<span class="muted">default</span>`;
+  const trail = (a.last_error || "").startsWith("Failed over") ? `<div class="muted" style="font-size:11px" title="${esc(a.last_error)}">↪ failed over</div>` : "";
+  return `<div style="display:flex;align-items:center;gap:8px"><span style="display:flex;gap:6px;align-items:center">${who}</span></div>${trail}`;
+}
+
 function renderLookup(el) {
   const preset = new URLSearchParams(location.hash.split("?")[1] || "").get("id") || "";
   el.innerHTML = `
@@ -844,6 +855,8 @@ function renderLookup(el) {
     const out = $("#lookup-result", el);
     try {
       const n = await api(`/notifications/${encodeURIComponent(id.trim())}`);
+      let providersById = {};
+      try { providersById = Object.fromEntries((await api("/providers")).map(p => [p.id, p])); } catch { /* labels are optional */ }
       out.innerHTML = `
         <div class="stat-grid" style="margin-top:20px">
           <div class="stat"><div class="stat-label">Status</div><div style="margin-top:8px">${badge(n.status)}</div></div>
@@ -856,12 +869,13 @@ function renderLookup(el) {
           <div class="card-body flush table-wrap">
             ${n.attempts.length === 0 ? emptyState("No attempts yet", "Fan-out may still be in the outbox — check back shortly.") : `
             <table>
-              <thead><tr><th>Attempt</th><th>Channel</th><th>Status</th><th>Tries</th><th>Sent</th><th>Delivered</th><th>Last error</th><th></th></tr></thead>
+              <thead><tr><th>Attempt</th><th>Channel</th><th>Provider</th><th>Status</th><th>Tries</th><th>Sent</th><th>Delivered</th><th>Last error</th><th></th></tr></thead>
               <tbody>${n.attempts.map(a => `
                 <tr>
                   <td>${shortId(a.id)}</td>
                   <td>${badge(chLabel(a.channel))}</td>
-                  <td>${badge(a.status)}</td>
+                  <td>${providerCell(a, providersById)}</td>
+                  <td>${badge(a.status)}${a.awaiting_confirmation ? `<div class="muted" style="font-size:11px">awaiting receipt</div>` : ""}</td>
                   <td>${a.attempt_count}</td>
                   <td class="muted">${esc(fmtDate(a.sent_at))}</td>
                   <td class="muted">${esc(fmtDate(a.delivered_at))}</td>
@@ -1407,6 +1421,24 @@ async function pickCatalogProvider() {
   });
 }
 
+/* Delivery-receipt status + webhook URL for providers that report delivery. */
+function receiptsHtml(p) {
+  if (!p.webhook_path) return "";
+  const url = p.webhook_url || (location.origin + p.webhook_path);
+  const auto = p.name === "twilio";                       // Pulse hands Twilio its callback itself
+  const keyField = { resend: "webhook_secret", sendgrid: "webhook_public_key" }[p.name];
+  const on = auto ? !!p.webhook_url : p.secrets_set.includes(keyField);
+  const hint = auto
+    ? (p.webhook_url ? "Pulse registers this callback with Twilio on every message."
+                     : "Set PULSE_API__PUBLIC_URL so Twilio can report delivery back to Pulse.")
+    : `Add this URL in ${esc(p.catalog?.name || p.name)}'s webhook settings, then paste the signing key via Edit.`;
+  return `<div class="muted" style="margin-top:6px;font-size:12px">
+      ${on ? "✓ Delivery receipts on" : "○ Delivery confirmation off — messages stay “sent”"} · ${hint}
+      <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+        <code class="mono" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px">${esc(url)}</code>
+        <button type="button" class="btn sm" data-copy="${esc(url)}">Copy</button></div></div>`;
+}
+
 function renderProviders(el) {
   el.innerHTML = `
     <div class="card">
@@ -1433,11 +1465,16 @@ function renderProviders(el) {
             <div style="font-weight:600">${esc(p.label)} ${badge(chLabel(p.channel))} ${boolBadge(p.is_active)}</div>
             <div class="muted">${esc(p.catalog?.name || p.name)}
               ${p.used_by.length ? ` · used by ${p.used_by.map(u => esc(u.name)).filter((v, i, a) => a.indexOf(v) === i).join(", ")}` : " · not used by any workflow yet"}</div>
+            ${receiptsHtml(p)}
           </div>
           <button class="btn sm" data-edit="${esc(p.id)}">Edit</button>
           <button class="btn sm danger" data-del="${esc(p.id)}">Delete</button>
         </div>`).join("");
 
+      list.querySelectorAll("[data-copy]").forEach(b => b.addEventListener("click", async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copy); toast("Webhook URL copied", "ok"); }
+        catch { toast("Copy failed — select the URL manually", "err"); }
+      }));
       list.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => {
         const p = items.find(x => x.id === b.dataset.edit);
         const spec = catalog.find(c => c.channel === p.channel && c.key === p.name);
