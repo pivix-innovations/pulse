@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from datetime import datetime, timedelta, timezone
 
 from clients.sentinel_client import DatabaseRecipientClient
 from config.loader import get_settings
@@ -83,6 +84,27 @@ async def main() -> None:
             except asyncio.TimeoutError:
                 pass
 
+    async def prune_loop() -> None:
+        while not stop.is_set():
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(
+                    days=settings.reconciliation.provider_call_retention_days
+                )
+                async with uow_factory() as uow:
+                    removed = await uow.provider_calls.prune(cutoff)
+                    await uow.commit()
+                if removed:
+                    logger.info("Pruned %d provider call log row(s)", removed)
+            except Exception:
+                logger.exception("Provider call prune failed")
+            try:
+                await asyncio.wait_for(
+                    stop.wait(),
+                    timeout=settings.reconciliation.provider_call_prune_interval_seconds,
+                )
+            except asyncio.TimeoutError:
+                pass
+
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
@@ -91,6 +113,7 @@ async def main() -> None:
         asyncio.create_task(relay.run()),
         asyncio.create_task(sweep_loop()),
         asyncio.create_task(schedule_loop()),
+        asyncio.create_task(prune_loop()),
     ]
     await stop.wait()
     relay.stop()

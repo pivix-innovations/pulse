@@ -22,3 +22,6 @@ class ReconciliationSettings(ConfigSection):
     # guard lease so a requeued job isn't rejected as a duplicate.
     stuck_lost_ttl_seconds: PositiveInt = 300
     stuck_in_doubt_ttl_seconds: PositiveInt = 300
+    # Provider call log (feeds provider health) is pruned past this age.
+    provider_call_retention_days: PositiveInt = 30
+    provider_call_prune_interval_seconds: float = 3600.0
