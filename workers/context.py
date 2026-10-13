@@ -7,6 +7,7 @@ from typing import Any
 from config.loader import get_settings
 from database.database import Database
 from providers.registry import ProviderRegistry
+from jobqueue.circuit_breaker import RedisCircuitBreaker
 from jobqueue.dispatch_guard import RedisDispatchGuard
 from jobqueue.producer import ArqJobPublisher
 from repositories.uow import SqlAlchemyUnitOfWork
@@ -32,6 +33,7 @@ async def build_worker_context(ctx: dict[str, Any]) -> None:
         guard=RedisDispatchGuard(ctx["redis"]),
         publisher=ArqJobPublisher(ctx["redis"]),
         retry=settings.retry,
+        breaker=RedisCircuitBreaker(ctx["redis"], settings.breaker),
     )
 
 

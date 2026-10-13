@@ -13,6 +13,7 @@ from domain.entities.provider_call import ProviderCall
 from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId, WorkflowId
 from jobqueue.retry import compute_backoff
+from services.ports.circuit_breaker import CircuitBreaker
 from services.ports.dispatch_guard import DispatchGuard
 from services.ports.providers import OutboundMessage, ProviderSendError, SendResult
 from services.ports.publisher import JobPublisher
@@ -79,12 +80,14 @@ class DeliveryService:
         guard: DispatchGuard,
         publisher: JobPublisher,
         retry: RetrySettings,
+        breaker: CircuitBreaker | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._providers = providers
         self._guard = guard
         self._publisher = publisher
         self._retry = retry
+        self._breaker = breaker
 
     async def deliver(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> str:
         async with self._uow_factory() as uow:
@@ -187,6 +190,7 @@ class DeliveryService:
 
         retryable = False
         invalid: list[str] = []
+        chain = await self._gate(chain, failures)
         for position, resolved in enumerate(chain):
             started = time.monotonic()
             try:
@@ -194,6 +198,7 @@ class DeliveryService:
                     resolved.provider.send(message), self._retry.provider_timeout_seconds
                 )
                 record(resolved, started, "ok", None)
+                await self._note(resolved, ok=True)
                 return resolved, result, failures, calls
             except (asyncio.TimeoutError, TimeoutError):
                 error = f"timed out after {self._retry.provider_timeout_seconds:g}s"
@@ -204,6 +209,8 @@ class DeliveryService:
                 failover = exc.failover if isinstance(exc, ProviderSendError) else True
                 invalid.extend(getattr(exc, "invalid_destinations", ()))
             record(resolved, started, "provider_error" if failover else "recipient_error", error[:500])
+            if failover:  # a bad recipient says nothing about the provider
+                await self._note(resolved, ok=False)
             failures.append(f"{resolved.label}: {error}")
             retryable = retryable or exc_retryable
             if not failover:
@@ -218,6 +225,40 @@ class DeliveryService:
         raise ChainFailed(
             "; ".join(failures), retryable=retryable, invalid=tuple(invalid), calls=calls
         )
+
+    async def _gate(
+        self, chain: list[ResolvedProviderLike], failures: list[str]
+    ) -> list[ResolvedProviderLike]:
+        """
+        Drop providers whose circuit is open. If that would leave nothing,
+        try the whole chain anyway: a pessimistic breaker must never turn a
+        partial outage into a total one.
+        """
+        if self._breaker is None:
+            return chain
+        usable: list[ResolvedProviderLike] = []
+        for resolved in chain:
+            if resolved.provider_id is None or await self._breaker.allow(resolved.provider_id):
+                usable.append(resolved)
+            else:
+                failures.append(f"{resolved.label}: skipped (circuit open)")
+                logger.info("Skipping provider '%s': circuit open", resolved.label)
+        if not usable:
+            logger.warning("Every provider circuit is open; trying the chain anyway")
+            failures.clear()
+            return chain
+        return usable
+
+    async def _note(self, resolved: ResolvedProviderLike, *, ok: bool) -> None:
+        if self._breaker is None or resolved.provider_id is None:
+            return
+        try:
+            if ok:
+                await self._breaker.record_success(resolved.provider_id)
+            else:
+                await self._breaker.record_failure(resolved.provider_id)
+        except Exception:  # the breaker is an optimisation; never fail a delivery over it
+            logger.exception("Circuit breaker update failed")
 
     async def _prune_destinations(
         self, uow: UnitOfWork, attempt: DeliveryAttempt, destinations: tuple[str, ...]
