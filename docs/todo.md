@@ -109,7 +109,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **503 passing tests** (509 with infrastructure) in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **503 passing tests** (612 with infrastructure) in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
