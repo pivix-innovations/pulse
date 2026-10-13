@@ -1842,12 +1842,35 @@ function renderTeam(el) {
 
 /* ═══ API Keys ════════════════════════════════════════════ */
 
+const KEY_SCOPES = [
+  { id: "ingest", label: "Ingest", help: "Send events (POST /events). For the services that produce notifications.", checked: true },
+  { id: "read",   label: "Read",   help: "Look things up: notifications, events, metrics, providers, workflows." },
+  { id: "client", label: "Client", help: "For end-user apps: live stream, acknowledgements, device registration, preferences." },
+  { id: "admin",  label: "Admin",  help: "Everything above, plus changing providers, workflows, templates and retrying dead letters." },
+];
+
+const KEY_STATUS = { active: "green", expired: "amber", revoked: "red" };
+
+function keyReveal(box, key, heading) {
+  box.innerHTML = `
+    <div class="reveal-box">
+      <b>${esc(key.name)}</b> — ${esc(heading)}
+      <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+        <span class="mono" style="word-break:break-all">${esc(key.key)}</span>
+        <button class="btn sm" id="copy-key">Copy</button></div>
+    </div>`;
+  box.querySelector("#copy-key").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(key.key); toast("Key copied", "ok"); }
+    catch { toast("Copy failed — select the key manually", "err"); }
+  });
+}
+
 function renderApiKeys(el) {
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <div><div class="card-title">Ingress API keys</div>
-          <div class="card-sub">Services authenticate with <span class="mono">X-API-Key</span>. Keys are hashed at rest and shown once at creation.</div></div>
+        <div><div class="card-title">API keys</div>
+          <div class="card-sub">Services authenticate with <span class="mono">X-API-Key</span>. Give each key only the scopes it needs. Keys are hashed at rest and shown once.</div></div>
         <button class="btn primary" id="new-btn">+ Create key</button>
       </div>
       <div class="card-body flush table-wrap" id="list">${emptyState("Loading…", "")}</div>
@@ -1861,18 +1884,46 @@ function renderApiKeys(el) {
       list.innerHTML = items.length === 0
         ? emptyState("No API keys", "Create a key so services like Quotient can publish events for this tenant.")
         : `<table>
-        <thead><tr><th>Name</th><th>Key</th><th>Status</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Key</th><th>Scopes</th><th>Status</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
         <tbody>${items.map(k => `<tr>
-          <td style="font-weight:550">${esc(k.name)}</td>
+          <td style="font-weight:550">${esc(k.name)}
+            ${k.replaced_by ? `<div class="muted" style="font-weight:400;font-size:12px">being replaced — switch clients to the new key</div>` : ""}
+            ${k.rotated_from ? `<div class="muted" style="font-weight:400;font-size:12px">rotated from an earlier key</div>` : ""}</td>
           <td class="mono muted">${esc(k.prefix)}…</td>
-          <td>${k.is_active ? '<span class="badge green plain">active</span>' : '<span class="badge red plain">revoked</span>'}</td>
-          <td class="muted">${esc(fmtDate(k.created_at))}</td>
-          <td style="text-align:right">${k.is_active ? `<button class="btn sm danger" data-del="${esc(k.id)}">Revoke</button>` : ""}</td>
+          <td>${k.scopes.map(sc => `<span class="badge plain">${esc(sc)}</span>`).join(" ")}</td>
+          <td><span class="badge ${KEY_STATUS[k.status] || ""} plain">${esc(k.status)}</span></td>
+          <td class="muted">${k.expires_at ? esc(fmtDate(k.expires_at)) : "never"}</td>
+          <td class="muted">${k.last_used_at ? esc(fmtDate(k.last_used_at)) : "never"}</td>
+          <td style="text-align:right;white-space:nowrap">${k.status === "active" ? `
+            <button class="btn sm" data-rotate="${esc(k.id)}">Rotate</button>
+            <button class="btn sm danger" data-del="${esc(k.id)}">Revoke</button>` : ""}</td>
         </tr>`).join("")}</tbody></table>`;
+
       list.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
         if (!confirm("Revoke this key? Services using it will stop authenticating immediately.")) return;
         try { await api(`/tenant/api-keys/${b.dataset.del}`, { method: "DELETE" }); toast("Key revoked", "ok"); load(); }
         catch (err) { toast(err.message, "err"); }
+      }));
+      list.querySelectorAll("[data-rotate]").forEach(b => b.addEventListener("click", () => {
+        const k = items.find(x => x.id === b.dataset.rotate);
+        openModal(`Rotate “${k.name}”`, `
+          <p class="muted" style="margin-top:0">A new key with the same scopes${k.expires_at ? " and expiry" : ""} is issued now.
+            The old key keeps working for the grace period so you can update your services without downtime.</p>
+          <div class="field"><label>Keep the old key working for</label>
+            <select name="grace">
+              <option value="0">Not at all (revoke now)</option>
+              <option value="1">1 hour</option>
+              <option value="24" selected>24 hours</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+            </select></div>`, {
+          submitLabel: "Rotate key",
+          onSubmit: async fd => {
+            const res = await api(`/tenant/api-keys/${k.id}/rotate`, { method: "POST", body: JSON.stringify({ grace_hours: Number(fd.get("grace")) }) });
+            keyReveal($("#key-reveal", el), res, `copy the new key now, it will not be shown again. The old key works until ${fmtDate(res.previous_key_valid_until)}.`);
+            toast("Key rotated", "ok"); load();
+          },
+        });
       }));
     } catch (err) { list.innerHTML = emptyState("Couldn't load API keys", err.message); }
   }
@@ -1880,15 +1931,25 @@ function renderApiKeys(el) {
   $("#new-btn", el).addEventListener("click", () => {
     openModal("Create API key", `
       <div class="field"><label>Name</label><input name="name" required placeholder="quotient-prod"></div>
-      <p class="muted" style="font-size:12.5px;margin:0">The full key is displayed once after creation — store it in the calling service's secrets.</p>`, {
+      <div class="field"><label>What may this key do?</label>
+        ${KEY_SCOPES.map(sc => `<label class="check" style="align-items:flex-start;margin:6px 0">
+          <input type="checkbox" name="scope" value="${sc.id}" ${sc.checked ? "checked" : ""}>
+          <span><b>${sc.label}</b><div class="muted" style="font-size:12px">${esc(sc.help)}</div></span></label>`).join("")}
+      </div>
+      <div class="field"><label>Expires</label>
+        <select name="expires">
+          <option value="">Never</option><option value="30">In 30 days</option>
+          <option value="90">In 90 days</option><option value="365">In a year</option>
+        </select></div>
+      <p class="muted" style="font-size:12.5px;margin:0">The full key is displayed once after creation: store it in the calling service's secrets.</p>`, {
       submitLabel: "Create",
       onSubmit: async fd => {
-        const res = await api("/tenant/api-keys", { method: "POST", body: JSON.stringify({ name: fd.get("name") }) });
-        $("#key-reveal", el).innerHTML = `
-          <div class="reveal-box">
-            <b>${esc(res.name)}</b> — copy this key now, it will not be shown again:
-            <div class="mono" style="margin-top:6px">${esc(res.key)}</div>
-          </div>`;
+        const scopes = fd.getAll("scope");
+        if (!scopes.length) throw new Error("Choose at least one scope");
+        const body = { name: fd.get("name"), scopes };
+        if (fd.get("expires")) body.expires_in_days = Number(fd.get("expires"));
+        const res = await api("/tenant/api-keys", { method: "POST", body: JSON.stringify(body) });
+        keyReveal($("#key-reveal", el), res, "copy this key now, it will not be shown again:");
         toast("API key created", "ok");
         load();
       },
