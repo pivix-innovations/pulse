@@ -4,7 +4,7 @@
 > **Last Updated**: October 13, 2026  
 > **Test Suite**: 594 passing, 134 skipped by default (`pytest`; the skips need infrastructure: e2e and Redis tests with `PULSE_E2E=1`, Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 727 passed)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
-> **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
+> **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness and against live Postgres/Redis via `make start`)  
 > **Schema Migrations**: Linear head `e5f2a4b6c391` (16 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
 
 ---

@@ -54,6 +54,7 @@ async def main() -> None:
             else:
                 print(f"tenant '{slug}' already exists — leaving as is")
 
+            await uow.session.flush()
             await uow.memberships.upsert(Membership(
                 id=MembershipId.new(), tenant_id=tenant.id, user_id=user.id,
                 role=TenantRole.ADMIN,
