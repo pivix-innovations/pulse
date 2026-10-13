@@ -909,7 +909,18 @@ function renderLookup(el) {
                 </tr>`).join("")}</tbody>
             </table>`}
           </div>
-        </div>`;
+        </div>
+        ${(n.steps || []).length ? `<div class="card">
+          <div class="card-head"><div class="card-title">Sequence steps (${n.steps.length})</div></div>
+          <div class="card-body flush table-wrap"><table>
+            <thead><tr><th>Step</th><th>Recipient</th><th>State</th><th>Runs / ran</th><th>Why</th></tr></thead>
+            <tbody>${n.steps.map(r => `<tr>
+              <td class="mono">${r.step_index + 1}. ${esc(r.step_id)}</td>
+              <td>${shortId(r.recipient_id)}</td>
+              <td>${badge(r.status)}</td>
+              <td class="muted">${esc(fmtDate(r.executed_at || r.run_at))}</td>
+              <td class="muted">${esc(r.reason || (r.attempt_id ? "sent as attempt " + r.attempt_id.slice(0, 8) : "—"))}</td>
+            </tr>`).join("")}</tbody></table></div></div>` : ""}`;
       out.querySelectorAll("[data-ack]").forEach(b => b.addEventListener("click", async () => {
         try {
           await api(`/notifications/${encodeURIComponent(id.trim())}/ack`, {
@@ -1229,10 +1240,19 @@ function mountWorkflowEditor(root, saved, initialDef) {
   const hidden = root.querySelector('input[name="definition"]');
   const byId = Object.fromEntries(saved.map(p => [p.id, p]));
   let st = wfStateFromDefinition(initialDef);
-  let jsonMode = false;
+  // Sequences (steps with delays and conditions) are edited as JSON; the form only knows channels.
+  let sequence = Array.isArray(initialDef.steps) && initialDef.steps.length > 0;
+  let jsonMode = sequence;
+  const SEQUENCE_EXAMPLE = {
+    steps: [
+      { id: "nudge", channel: "in_app", subject: "Hi {{ recipient.external_ref }}", body: "You have a new message", format: "text" },
+      { id: "email", channel: "email", subject: "You have a new message", body: "Open the app to read it.", format: "markdown",
+        delay: "10m", when: { status: "unread" } },
+    ],
+  };
   let dragFrom = null;
 
-  const sync = () => { hidden.value = JSON.stringify(wfDefinition(st)); };
+  const sync = () => { if (!sequence) hidden.value = JSON.stringify(wfDefinition(st)); };
 
   function chainHtml(c) {
     const ids = st.chains[c.channel] || [];
@@ -1275,10 +1295,17 @@ function mountWorkflowEditor(root, saved, initialDef) {
   function draw() {
     sync();
     if (jsonMode) {
-      host.innerHTML = `<div class="field"><label>Definition (JSON)</label>
-        <textarea id="wf-json" rows="16" spellcheck="false">${esc(JSON.stringify(wfDefinition(st), null, 2))}</textarea></div>
-        <button type="button" class="btn sm" id="wf-form">← Back to form</button>`;
-      host.querySelector("#wf-json").addEventListener("input", e => { hidden.value = e.target.value; });
+      const shown = sequence ? (initialDef.steps && !host.dataset.edited ? initialDef : JSON.parse(hidden.value || "{}")) : wfDefinition(st);
+      host.innerHTML = `${sequence ? `<div class="chain-note" style="margin-bottom:10px"><b>Sequence workflow.</b> Each step sends on a channel, optionally after a
+          <code>delay</code> (<code>"10m"</code>, <code>"2h"</code>, seconds) and only <code>when</code> its condition holds:
+          <code>{"status": "unread"}</code> tests the previous step (or name one with <code>"step"</code>), and
+          <code>{"payload": [{"field": "plan", "op": "eq", "value": "pro"}]}</code> tests the event. One step per channel, up to 10.</div>` : ""}
+        <div class="field"><label>Definition (JSON)</label>
+        <textarea id="wf-json" rows="16" spellcheck="false">${esc(JSON.stringify(shown, null, 2))}</textarea></div>
+        ${sequence ? "" : `<button type="button" class="btn sm" id="wf-form">← Back to form</button>`}`;
+      hidden.value = JSON.stringify(shown);
+      host.querySelector("#wf-json").addEventListener("input", e => { hidden.value = e.target.value; host.dataset.edited = "1"; });
+      if (sequence) return;
       host.querySelector("#wf-form").addEventListener("click", () => {
         try { st = wfStateFromDefinition(JSON.parse(host.querySelector("#wf-json").value)); }
         catch { toast("That JSON isn't valid yet", "err"); return; }
@@ -1292,8 +1319,15 @@ function mountWorkflowEditor(root, saved, initialDef) {
       ${st.channels.map(channelHtml).join("") || `<div class="chain-note" style="margin-bottom:10px">No channels yet — add the first one below.</div>`}
       <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
         ${free.length ? `<select id="wf-add-ch"><option value="">+ Add a channel…</option>${free.map(ch => `<option value="${ch}">${chLabel(ch)}</option>`).join("")}</select>` : `<span></span>`}
-        <button type="button" class="btn sm" id="wf-json-btn">Edit as JSON</button>
+        <span style="display:flex;gap:8px">
+          <button type="button" class="btn sm" id="wf-seq-btn" title="Send in steps with delays and conditions">Make it a sequence…</button>
+          <button type="button" class="btn sm" id="wf-json-btn">Edit as JSON</button>
+        </span>
       </div>`;
+    host.querySelector("#wf-seq-btn")?.addEventListener("click", () => {
+      if (st.channels.length && !confirm("Switch to a sequence? The channels above are replaced by the example steps.")) return;
+      sequence = true; jsonMode = true; initialDef = SEQUENCE_EXAMPLE; delete host.dataset.edited; draw();
+    });
 
     host.querySelector("#wf-add-ch")?.addEventListener("change", e => {
       if (!e.target.value) return;
@@ -1373,11 +1407,12 @@ function renderWorkflows(el) {
       list.innerHTML = `<table>
         <thead><tr><th>Name</th><th>Event type</th><th>Channels</th><th>Status</th><th>Updated</th><th></th></tr></thead>
         <tbody>${items.map(w => {
-          const channels = (w.definition.channels || []).map(c => c.channel);
+          const steps = w.definition.steps || [];
+          const channels = (steps.length ? steps : (w.definition.channels || [])).map(c => c.channel);
           return `<tr>
             <td style="font-weight:550">${esc(w.name)}<div class="muted" style="font-weight:400">${shortId(w.id)}</div></td>
             <td class="mono">${esc(w.event_type)}</td>
-            <td>${channels.map(c => badge(chLabel(c))).join(" ") || "—"}</td>
+            <td>${steps.length ? `<span class="muted" style="font-size:12px">sequence:</span> ${channels.map(c => badge(chLabel(c))).join(" → ")}` : (channels.map(c => badge(chLabel(c))).join(" ") || "—")}</td>
             <td>${boolBadge(w.is_active)}</td>
             <td class="muted">${esc(fmtDate(w.updated_at || w.created_at))}</td>
             <td style="text-align:right;white-space:nowrap">
