@@ -141,6 +141,7 @@ ATTACKS = [
     ("b", "GET", "/api/v1/preferences?recipient=ada", None),   # B has no recipient "ada"
     ("b", "POST", "/api/v1/dead-letters/{dead_letter}/retry", None),
     ("b_admin", "DELETE", "/api/v1/tenant/api-keys/{api_key}", None),
+    ("b_admin", "POST", "/api/v1/tenant/api-keys/{api_key}/rotate", None),
     ("b_admin", "DELETE", "/api/v1/tenant/members/{membership}", None),
 ]
 
@@ -412,7 +413,7 @@ COVERED = {
     ("PUT", "/api/v1/templates/{template_id}"), ("DELETE", "/api/v1/templates/{template_id}"),
     ("DELETE", "/api/v1/preferences/{preference_id}"), ("GET", "/api/v1/preferences"),
     ("POST", "/api/v1/dead-letters/{dead_letter_id}/retry"), ("DELETE", "/api/v1/tenant/api-keys/{key_id}"),
-    ("DELETE", "/api/v1/tenant/members/{membership_id}"),
+    ("DELETE", "/api/v1/tenant/members/{membership_id}"), ("POST", "/api/v1/tenant/api-keys/{key_id}/rotate"),
     # lists and aggregates
     ("GET", "/api/v1/notifications"), ("GET", "/api/v1/events"), ("GET", "/api/v1/dead-letters"),
     ("GET", "/api/v1/providers"), ("GET", "/api/v1/providers/health"), ("GET", "/api/v1/workflows"),
@@ -436,3 +437,12 @@ async def test_every_tenant_route_is_covered(world):
     )
     stale = [r for r in COVERED if r not in set(tenant_routes(world.app))]
     assert stale == [], f"COVERED lists routes that no longer exist: {stale}"
+
+
+async def test_every_route_an_api_key_can_reach_declares_the_scope_it_needs(world):
+    """A key-reachable route without a scope would be open to any key, however limited."""
+    unscoped = []
+    for method, path, deps in api_routes(world.app):
+        if "require_tenant" in deps and "require_tenant_admin" not in deps and "require_scope" not in deps:
+            unscoped.append(f"{method} {path}")
+    assert unscoped == [], f"Routes reachable with an API key but declaring no scope: {unscoped}"
