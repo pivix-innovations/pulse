@@ -76,12 +76,17 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | G5 | Failover inside a channel | High | M | [x] | Next provider only on hard errors and timeouts (never on sent-but-unconfirmed). When every provider in the channel fails, the existing channel fallback applies. |
 | G6 | Provider connection test | Medium | S | [x] | `POST /provider-catalog/{channel}/{key}/test` (works on unsaved forms, reuses stored secrets); "Test connection" button in the console. Live check for SMTP, Twilio, Resend, SendGrid, FCM (dry run). |
 | G7 | Console UI: catalog grid with logos, configure form, drag-to-prioritise chain editor | High | L | [~] | Catalog picker, configure form and ↑/↓ chain editor shipped; drag-to-reorder and "test connection" still open. |
-| G8 | Real providers: Twilio, Resend, SendGrid, SES | High | M | [~] | Twilio, Resend and SendGrid done (httpx, error mapping to retry/failover semantics). SES open: needs boto3 for SigV4. Delivery receipts for all three still need webhook wiring, so `sent` is final for now. |
+| G8 | Real providers: Twilio, Resend, SendGrid, SES | High | M | [x] | All four in the catalog with live connection tests. |
 
 ## Phase H — SSE & Push hardening
 
 | ID | Item | Pri | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| G9 | Delivery receipts (webhooks) for Twilio, Resend, SendGrid | High | M | [x] | Per-provider signed endpoint `POST /webhooks/p/{provider_id}`; attempts keep the provider message id; confirmation is only expected once receipts are set up, so unconfigured providers never get falsely escalated. Needs `PULSE_API__PUBLIC_URL` for Twilio. |
+| G10 | SES delivery/bounce events via SNS | Medium | M | [ ] | SNS subscription confirmation + message signature verification. SES attempts stay `sent` until this lands. |
+| G11 | UI: webhook URL panel, provider column and failover trail on attempts | Medium | S | [x] | |
+| G12 | UI: drag-to-reorder chains, workflow editor without raw JSON | Medium | M | [ ] | Chain editor uses ↑/↓; the rest of the workflow definition is still a JSON textarea. |
+| G13 | UI: per-provider health (success rate, last failure) | Medium | M | [ ] | Needs attempts-by-provider metrics. |
 | H1 | Push error classification (retryable / permanent / failover) | High | S | [x] | Timeouts and 5xx fail over; invalid tokens do not. |
 | H2 | Deactivate stale device tokens on `UNREGISTERED` | High | S | [x] | Stop retrying dead tokens on every send. |
 | H3 | FCM per-provider app instances (no process-global init) | High | S | [x] | Credentials come from the saved provider's secrets. |
