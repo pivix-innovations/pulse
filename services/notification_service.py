@@ -7,21 +7,20 @@ from typing import Any, Sequence
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.event import Event
 from domain.entities.notification import Notification
-from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
 from domain.entities.workflow import Workflow
 from domain.value_objects.ids import (
-    DeliveryAttemptId,
     EventId,
     NotificationId,
-    OutboxEntryId,
     RecipientId,
     TenantId,
     WorkflowId,
 )
 from services.ports.clients import ResolvedRecipient, SentinelClient
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
+from services.attempts import build_attempt, outbox_entries
 from services.rendering_service import RenderingService
+from services.sequence_service import SequenceEngine
 from workflows.registry import WorkflowDefinition, WorkflowRegistry
 
 
@@ -67,6 +66,7 @@ class NotificationService:
         self._sentinel = sentinel
         self._registry = registry
         self._rendering = rendering
+        self._sequences = SequenceEngine(rendering)
 
     async def process_event(self, tenant_id: TenantId, incoming: IncomingEvent) -> NotificationId:
         # Idempotent ingress: same key -> same notification, no new fan-out.
@@ -164,6 +164,7 @@ class NotificationService:
         Shared by ingress and the scheduler. Returns the attempt count.
         """
         attempts: list[DeliveryAttempt] = []
+        recipients: list[Recipient] = []
         for r in resolved:
             recipient = await uow.recipients.upsert_by_external_ref(
                 Recipient(
@@ -176,6 +177,9 @@ class NotificationService:
                     timezone=r.timezone,
                 )
             )
+            recipients.append(recipient)
+            if definition.is_sequence:
+                continue
             prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
             opted_out = {p.channel for p in prefs if not p.opted_in}
             quiet = {p.channel: p.quiet_hours for p in prefs if p.quiet_hours is not None}
@@ -190,29 +194,12 @@ class NotificationService:
                     attempt.next_retry_at = window.window_end(now)
                 attempts.append(attempt)
 
+        if definition.is_sequence:
+            # Steps decide what is sent and when; the first one runs now (unless delayed).
+            return await self._sequences.start(uow, notification, definition, recipients)
+
         await uow.delivery_attempts.add_many(attempts)
-        await uow.outbox.add_many(
-            [
-                OutboxEntry(
-                    id=OutboxEntryId.new(),
-                    tenant_id=notification.tenant_id,
-                    aggregate_type="delivery_attempt",
-                    aggregate_id=str(a.id),
-                    topic=f"deliver.{a.channel.value}",
-                    payload={
-                        "attempt_id": str(a.id),
-                        "tenant_id": str(notification.tenant_id),
-                        "channel": a.channel.value,
-                        **(
-                            {"defer_until": a.next_retry_at.isoformat()}
-                            if a.next_retry_at is not None
-                            else {}
-                        ),
-                    },
-                )
-                for a in attempts
-            ]
-        )
+        await uow.outbox.add_many(outbox_entries(notification, attempts))
         return len(attempts)
 
     def _build_attempt(
@@ -221,27 +208,4 @@ class NotificationService:
         recipient: Recipient,
         channel_template,
     ) -> DeliveryAttempt:
-        context = {
-            **notification.payload,
-            "recipient": {
-                "external_ref": recipient.external_ref,
-                "email": recipient.email,
-                "locale": recipient.locale,
-            },
-        }
-        rendered = self._rendering.render(
-            body=channel_template.body,
-            subject=channel_template.subject,
-            format=channel_template.format,
-            context=context,
-        )
-        return DeliveryAttempt(
-            id=DeliveryAttemptId.new(),
-            tenant_id=notification.tenant_id,
-            notification_id=notification.id,
-            recipient_id=recipient.id,
-            channel=channel_template.channel,
-            subject=rendered.subject,
-            body=rendered.text,
-            body_html=rendered.html,
-        )
+        return build_attempt(self._rendering, notification, recipient, channel_template)
