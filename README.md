@@ -173,10 +173,13 @@ pulse/
 
 ```bash
 make test        # unit + API tests, in-memory fakes, no services needed
+make test-pg     # repository contract tests: in-memory fakes vs real Postgres, incl. SKIP LOCKED
 make e2e         # smoke + chaos tests: real API, workers and scheduler on real Postgres + Redis
 ```
 
 `make e2e` starts the compose Postgres and Redis, then runs `tests/e2e`: the full event → outbox → worker → delivery → settlement path, provider failover with the circuit breaker, a worker `SIGKILL`ed mid-send, and a lost queue job. Each run uses a throwaway database and Redis DB index. If port 6380 is taken by another project, use `PULSE_REDIS_PORT=6390 make e2e` with `PULSE_REDIS__PORT=6390` exported.
+
+`tests/repositories` runs each repository assertion against the in-memory fakes and, with `PULSE_PG_TESTS=1`, the real Postgres repositories, so the fakes the rest of the suite relies on stay honest. It also proves the `SKIP LOCKED` queries (outbox relay, stuck-attempt sweep, scheduler) never hand the same row to two workers.
 
 `tests/integration` checks SES events against real SNS signatures with LocalStack (`LOCALSTACK_URL=http://localhost:4566`). CI (`.github/workflows/ci.yml`) runs lint, unit tests and the e2e suite.
 

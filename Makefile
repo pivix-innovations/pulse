@@ -147,6 +147,10 @@ lint: ## Lint (ruff) and type-check (ty)
 	$(UV) ruff check .
 	$(UV) ty check
 
+.PHONY: test-pg
+test-pg: infra-up ## Repository contract tests against real Postgres (memory fakes + SQL, SKIP LOCKED)
+	PULSE_PG_TESTS=1 $(UV) pytest tests/repositories -v
+
 .PHONY: e2e
 e2e: infra-up ## End-to-end smoke + chaos tests on real Postgres/Redis (set PULSE_REDIS__PORT if 6380 is taken)
 	PULSE_E2E=1 $(UV) pytest tests/e2e -v

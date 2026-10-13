@@ -74,6 +74,10 @@ jobs:
         run: uv run alembic upgrade head
       - name: Models and migrations agree
         run: uv run alembic check
+      - name: Repository tests on real Postgres
+        run: uv run pytest tests/repositories -v
+        env:
+          PULSE_PG_TESTS: "1"
       - name: Smoke and chaos tests
         run: uv run pytest tests/e2e -v
         env:
