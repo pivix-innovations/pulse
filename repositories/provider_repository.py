@@ -55,6 +55,11 @@ class PostgresProviderRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
 
+    async def get_unscoped(self, provider_id: ProviderId) -> Provider | None:
+        """By id alone; only for webhooks, which prove themselves by signature."""
+        row = await self._session.get(ProviderModel, provider_id.value)
+        return _to_entity(row) if row else None
+
     async def list(self, tenant_id: TenantId) -> list[Provider]:
         stmt = (
             select(ProviderModel)

@@ -198,6 +198,10 @@ class ProviderRepository(Protocol):
 
     async def list(self, tenant_id: TenantId) -> list[Provider]: ...
 
+    async def get_unscoped(self, provider_id: ProviderId) -> Provider | None:
+        """By id across tenants. Only for signature-verified provider webhooks."""
+        ...
+
     async def list_by_ids(
         self, tenant_id: TenantId, provider_ids: list[ProviderId]
     ) -> list[Provider]:

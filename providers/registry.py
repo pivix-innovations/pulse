@@ -13,6 +13,7 @@ from providers.catalog import BuildContext, get_spec
 from providers.email.factory import build_email_provider
 from providers.in_app.sse import SseInAppProvider
 from providers.push.factory import build_push_provider
+from providers.receipts import webhook_url
 from providers.sms.factory import build_sms_provider
 from services.ports.providers import NotificationProvider
 from services.ports.uow import UnitOfWork
@@ -136,6 +137,7 @@ class ProviderRegistry:
                 BuildContext(
                     redis=self._redis,
                     fcm_credentials_path=self._settings.push.fcm_credentials_path,
+                    webhook_url=webhook_url(self._settings.api.public_url, row.id),
                 ),
             )
         except Exception:

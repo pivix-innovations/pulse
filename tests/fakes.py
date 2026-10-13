@@ -427,6 +427,9 @@ class InMemoryProviderRepository:
     async def list(self, tenant_id: TenantId) -> list[Provider]:
         return [p for p in self.items.values() if p.tenant_id == tenant_id]
 
+    async def get_unscoped(self, provider_id: ProviderId) -> Provider | None:
+        return self.items.get(str(provider_id))
+
     async def list_by_ids(
         self, tenant_id: TenantId, provider_ids: list[ProviderId]
     ) -> list[Provider]:

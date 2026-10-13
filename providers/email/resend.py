@@ -9,11 +9,18 @@ from services.ports.providers import OutboundMessage, SendResult
 
 class ResendEmailProvider(EmailProvider):
     name = "resend"
-    confirms_delivery = False
 
     def __init__(
-        self, *, api_key: str, from_address: str, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        *,
+        api_key: str,
+        from_address: str,
+        receipts: bool = False,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
+        # True once the tenant has set up the provider's webhook, so receipts
+        # can confirm delivery; otherwise `sent` is final.
+        self.confirms_delivery = receipts
         self._key = api_key
         self._from = from_address
         self._transport = transport

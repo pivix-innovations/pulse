@@ -12,9 +12,8 @@ _BAD_NUMBER = frozenset({21211, 21214, 21217, 21408, 21610, 21612, 21614})
 
 class TwilioSmsProvider(SmsProvider):
     name = "twilio"
-    # Delivery receipts need a status callback wired to Pulse's webhook;
-    # until then `sent` is final.
-    confirms_delivery = False
+    # True only when Pulse is publicly reachable, so Twilio's status
+    # callbacks can confirm delivery; otherwise `sent` is final.
 
     def __init__(
         self,
@@ -23,16 +22,21 @@ class TwilioSmsProvider(SmsProvider):
         auth_token: str,
         from_number: str | None = None,
         messaging_service_sid: str | None = None,
+        status_callback: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._sid = account_sid
         self._token = auth_token
         self._from = from_number
         self._service = messaging_service_sid
+        self._status_callback = status_callback
+        self.confirms_delivery = bool(status_callback)
         self._transport = transport
 
     async def send(self, message: OutboundMessage) -> SendResult:
         data = {"To": message.to, "Body": message.body_text}
+        if self._status_callback:
+            data["StatusCallback"] = self._status_callback
         if self._service:
             data["MessagingServiceSid"] = self._service
         else:

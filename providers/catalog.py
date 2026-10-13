@@ -17,6 +17,7 @@ from providers.email.console import ConsoleEmailProvider
 from providers.email.resend import ResendEmailProvider, check_resend
 from providers.email.sendgrid import SendGridEmailProvider, check_sendgrid
 from providers.email.smtp import SmtpEmailProvider
+from providers.receipts import supports_receipts
 from providers.push.console import ConsolePushProvider
 from providers.push.firebase import FcmPushProvider, check_fcm
 from providers.sms.console import ConsoleSmsProvider
@@ -48,6 +49,8 @@ class BuildContext:
     # Env-configured FCM credentials, used by saved FCM providers that
     # predate per-provider secrets.
     fcm_credentials_path: str | None = None
+    # This saved provider's public webhook URL, when Pulse's public URL is set.
+    webhook_url: str | None = None
 
 
 Builder = Callable[[dict[str, Any], dict[str, Any], BuildContext], NotificationProvider]
@@ -143,6 +146,7 @@ class ProviderSpec:
             "description": self.description,
             "builtin": self.builtin,
             "testable": self.check is not None,
+            "receipts": supports_receipts(self.id),
             "docs_url": self.docs_url,
             "logo_url": f"/api/v1/provider-catalog/{self.channel.value}/{self.key}/logo",
             "fields": [
@@ -202,12 +206,13 @@ def _build_smtp(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext
     )
 
 
-def _build_twilio(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
+def _build_twilio(config: dict[str, Any], secrets: dict[str, Any], ctx: BuildContext):
     return TwilioSmsProvider(
         account_sid=config["account_sid"],
         auth_token=secrets["auth_token"],
         from_number=config.get("from_number"),
         messaging_service_sid=config.get("messaging_service_sid"),
+        status_callback=ctx.webhook_url,
     )
 
 
@@ -217,11 +222,19 @@ def _twilio_cross(config: dict[str, Any], secrets: dict[str, Any]) -> None:
 
 
 def _build_resend(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
-    return ResendEmailProvider(api_key=secrets["api_key"], from_address=config["from_address"])
+    return ResendEmailProvider(
+        api_key=secrets["api_key"],
+        from_address=config["from_address"],
+        receipts=bool(secrets.get("webhook_secret")),
+    )
 
 
 def _build_sendgrid(config: dict[str, Any], secrets: dict[str, Any], _: BuildContext):
-    return SendGridEmailProvider(api_key=secrets["api_key"], from_address=config["from_address"])
+    return SendGridEmailProvider(
+        api_key=secrets["api_key"],
+        from_address=config["from_address"],
+        receipts=bool(secrets.get("webhook_public_key")),
+    )
 
 
 async def _check_smtp(config: dict[str, Any], secrets: dict[str, Any]) -> tuple[bool, str]:
@@ -305,6 +318,11 @@ _SPECS: tuple[ProviderSpec, ...] = (
         fields=(
             ConfigField("from_address", "From address", required=True, help="Must use a domain verified in Resend."),
             ConfigField("api_key", "API key", secret=True, required=True),
+            ConfigField(
+                "webhook_secret", "Webhook signing secret", secret=True,
+                help="Optional. In Resend add a webhook to this provider's URL (shown after saving), "
+                "then paste its signing secret (whsec_…) to confirm delivery and catch bounces.",
+            ),
         ),
         check=_check_resend,
         docs_url="https://resend.com/docs/api-reference/emails/send-email",
@@ -319,6 +337,11 @@ _SPECS: tuple[ProviderSpec, ...] = (
         fields=(
             ConfigField("from_address", "From address", required=True, help="Must be a verified sender or domain."),
             ConfigField("api_key", "API key", secret=True, required=True, help="Needs the Mail Send permission."),
+            ConfigField(
+                "webhook_public_key", "Event Webhook verification key", secret=True,
+                help="Optional. Enable a signed Event Webhook in SendGrid pointing at this provider's "
+                "URL (shown after saving) and paste its verification key to confirm delivery and catch bounces.",
+            ),
         ),
         check=_check_sendgrid,
         docs_url="https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send",
