@@ -48,7 +48,7 @@
 
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| E1 | Persistent in-app inbox | High | L | `in_app_messages` table (`is_read`, `read_at`, `is_archived`); `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`. SSE is live-only today. |
+| E1 | Persistent in-app inbox ✅ | High | L | `in_app_messages` table (`is_read`, `read_at`, `is_archived`); `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`. SSE is live-only today. |
 | E2 | Multi-step workflows | High | L | Ordered steps with delays and conditions (e.g. in-app → wait 10m → if unread, email). Builds on E1. |
 | E3 | Digest / batching | Medium | L | `digest` step with time windows or thresholds; buffer table plus a consolidated render. |
 | E4 | Template versioning & preview | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
@@ -63,7 +63,8 @@
 | F2 | Event/notification search | Medium | M | Filter by recipient, workflow, status and date range, beyond the status filter. |
 | F3 | Provider and workflow editor UI | Medium | M | API exists; add console pages. |
 | F4 | OpenAPI polish + client SDK | Low | M | Examples, error schemas, generated Python/TS SDK. |
-| F5 | Headless inbox widget (JS/React) | Low | L | Depends on E1. |
+| F5 | Headless inbox widget (JS/React) | Low | L | Builds on E1 (done): list, badge, read, archive, live updates via SSE. |
+| F6 | Console: browse a recipient's inbox | Low | S | Support view over `GET /inbox` with read/unread state; useful for debugging "I never got it". |
 
 ## Phase G — Provider Catalog & Workflow Provider Chains
 
@@ -98,7 +99,7 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | H6 | APNs driver | Medium | M | [ ] | |
 | H7 | SSE: tests for replay, ack-to-settle, no-subscriber failure, fan-out | High | S | [x] | Stream body extracted (`stream_events`); unit, API, real-Redis and real-stack tests. |
 | H8 | SSE: short-lived stream token instead of API key in the URL | Medium | M | [ ] | |
-| H9 | Persistent inbox (see E1) | High | L | [ ] | |
+| H9 | Persistent inbox (see E1) | High | L | [x] | See [inbox.md](inbox.md). |
 
 ## Suggested order
 

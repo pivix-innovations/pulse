@@ -169,6 +169,11 @@ pulse/
 └── tests/
 ```
 
+## In-app inbox
+
+In-app messages are stored per recipient and also pushed live over SSE. Clients list, count, read and archive them
+through `/api/v1/inbox`. See [docs/inbox.md](docs/inbox.md).
+
 ## Observability
 
 Metrics are exported with OpenTelemetry over OTLP; OpenObserve is the reference backend. See
