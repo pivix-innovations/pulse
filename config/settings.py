@@ -9,6 +9,7 @@ from config.logging import LoggingSettings
 from config.database import DatabaseSettings
 from config.outbox import OutboxSettings
 from config.push import PushSettings
+from config.ratelimit import RateLimitSettings
 from config.reconciliation import ReconciliationSettings
 from config.redis import RedisSettings
 from config.retry import RetrySettings
@@ -30,5 +31,6 @@ class Settings(EnvironmentSettings):
     push: PushSettings = PushSettings()
     retry: RetrySettings = RetrySettings()
     breaker: BreakerSettings = BreakerSettings()
+    rate_limit: RateLimitSettings = RateLimitSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
     webhook: WebhookSettings = WebhookSettings()
