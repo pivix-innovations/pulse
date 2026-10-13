@@ -6,6 +6,7 @@ from config.app import AppSettings
 from config.api import ApiSettings
 from config.email import EmailSettings
 from config.logging import LoggingSettings
+from config.observability import ObservabilitySettings
 from config.database import DatabaseSettings
 from config.outbox import OutboxSettings
 from config.push import PushSettings
@@ -32,6 +33,7 @@ class Settings(EnvironmentSettings):
     push: PushSettings = PushSettings()
     retry: RetrySettings = RetrySettings()
     breaker: BreakerSettings = BreakerSettings()
+    otel: ObservabilitySettings = ObservabilitySettings()
     rate_limit: RateLimitSettings = RateLimitSettings()
     sentinel: SentinelSettings = SentinelSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
