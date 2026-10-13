@@ -15,6 +15,7 @@ from domain.value_objects.ids import MembershipId, TenantId, UserId
 from config.loader import get_settings
 from main import create_app
 from services.identity_service import IdentityService, hash_password
+from services.inbox_service import InboxService
 from services.metrics_service import MetricsService
 from services.notification_service import NotificationService
 from services.ports.clients import ResolvedRecipient
@@ -70,6 +71,7 @@ async def world(monkeypatch):
         rendering=RenderingService(),
     )
     app.state.metrics_service = MetricsService(lambda: uow)
+    app.state.inbox_service = InboxService(lambda: uow)
     app.state.redis = FakeRedis()
 
     # Dependencies are overridden; the two routers that call get_uow() directly are patched.

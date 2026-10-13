@@ -17,6 +17,7 @@ from api.v1.dead_letters import router as dead_letters_router
 from api.v1.devices import router as devices_router
 from api.v1.tenant import router as tenant_router
 from api.v1.events import router as events_router
+from api.v1.inbox import router as inbox_router
 from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
 from api.v1.preferences import router as preferences_router
@@ -31,6 +32,7 @@ from config.loader import get_settings
 from database.database import Database
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.identity_service import IdentityService
+from services.inbox_service import InboxService
 from services.metrics_service import MetricsService
 from services.rate_limit_service import RateLimitService
 from services.notification_service import NotificationService
@@ -75,6 +77,7 @@ async def lifespan(app: FastAPI):
         RedisRateLimiter(app.state.redis), uow_factory, settings.rate_limit
     )
     app.state.metrics_service = MetricsService(uow_factory)
+    app.state.inbox_service = InboxService(uow_factory)
     app.state.identity_service = IdentityService(uow_factory)
 
     yield
@@ -132,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(dead_letters_router, prefix="/api/v1")
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(sse_router, prefix="/api/v1")
+    app.include_router(inbox_router, prefix="/api/v1")
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(preferences_router, prefix="/api/v1")
