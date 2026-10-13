@@ -155,6 +155,29 @@ class Stack:
         finally:
             await database.shutdown()
 
+    def add_tenant(self, name: str) -> tuple[str, str]:
+        """Another tenant with its own API key, for isolation tests. Returns (api_key, tenant_id)."""
+        return asyncio.run(self._add_tenant(name))
+
+    async def _add_tenant(self, name: str) -> tuple[str, str]:
+        from domain.entities.identity import Tenant
+        from domain.value_objects.ids import TenantId
+
+        database = Database(self.settings.database.model_copy(update={"db": self.db_name}))
+        await database.initialize()
+        try:
+            def factory() -> SqlAlchemyUnitOfWork:
+                return SqlAlchemyUnitOfWork(database.session_factory)
+
+            tenant = Tenant(id=TenantId.new(), name=name, slug=f"{name}-{self.name}")
+            async with factory() as uow:
+                await uow.tenants.add(tenant)
+                await uow.commit()
+            key, _ = await IdentityService(factory).create_api_key(tenant.id, name)
+            return key, str(tenant.id)
+        finally:
+            await database.shutdown()
+
     # ── processes ──────────────────────────────────────────────────────
 
     def spawn(self, name: str, args: list[str], env: dict[str, str] | None = None) -> None:
