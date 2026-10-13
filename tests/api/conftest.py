@@ -72,6 +72,7 @@ async def world(monkeypatch):
     )
     app.state.metrics_service = MetricsService(lambda: uow)
     app.state.inbox_service = InboxService(lambda: uow)
+    app.state.rendering = RenderingService()
     app.state.redis = FakeRedis()
 
     # Dependencies are overridden; the two routers that call get_uow() directly are patched.

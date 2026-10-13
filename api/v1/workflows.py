@@ -12,6 +12,7 @@ from domain.entities.workflow import Workflow
 from domain.enums import ChannelType
 from domain.value_objects.ids import InvalidIdError, ProviderId, TenantId, WorkflowId
 from repositories.uow import SqlAlchemyUnitOfWork
+from services import templates as svc_templates
 from workflows.registry import WorkflowDefinition
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -68,6 +69,21 @@ def _validate_definition(body: WorkflowIn) -> None:
             )
 
 
+async def _validate_template_refs(
+    uow: SqlAlchemyUnitOfWork, tenant_id: TenantId, definition: dict[str, Any]
+) -> None:
+    """Every `template` reference must name one of the tenant's active, published templates for that channel."""
+    for name, channel in sorted(svc_templates.references(definition)):
+        found = await uow.templates.find(tenant_id, name, ChannelType(channel))
+        if not found:
+            raise HTTPException(status_code=422, detail=f"Unknown template '{name}' for channel '{channel}'")
+        if not any(t.is_active and t.published_version is not None for t in found):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Template '{name}' ({channel}) has no published version (or is inactive); publish it first",
+            )
+
+
 async def _validate_provider_chains(
     uow: SqlAlchemyUnitOfWork, tenant_id: TenantId, definition: dict[str, Any]
 ) -> None:
@@ -119,6 +135,7 @@ async def create_workflow(
     workflow = Workflow(id=WorkflowId.new(), tenant_id=tenant_id, **body.model_dump())
     async with uow:
         await _validate_provider_chains(uow, tenant_id, body.definition)
+        await _validate_template_refs(uow, tenant_id, body.definition)
         await uow.workflows.add(workflow)
         await uow.commit()
         return _out(await uow.workflows.get(tenant_id, workflow.id))
@@ -159,6 +176,7 @@ async def update_workflow(
         if existing is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         await _validate_provider_chains(uow, tenant_id, body.definition)
+        await _validate_template_refs(uow, tenant_id, body.definition)
         updated = Workflow(id=existing.id, tenant_id=tenant_id, **body.model_dump())
         await uow.workflows.update(updated)
         await uow.commit()

@@ -78,6 +78,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.metrics_service = MetricsService(uow_factory)
     app.state.inbox_service = InboxService(uow_factory)
+    app.state.rendering = RenderingService()
     app.state.identity_service = IdentityService(uow_factory)
 
     yield

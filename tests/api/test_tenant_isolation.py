@@ -144,6 +144,11 @@ ATTACKS = [
     ("b", "GET", "/api/v1/templates/{template}", None),
     ("b", "PUT", "/api/v1/templates/{template}", {"name": "hijacked", "channel": "email", "body": "x"}),
     ("b", "DELETE", "/api/v1/templates/{template}", None),
+    ("b", "GET", "/api/v1/templates/{template}/versions", None),
+    ("b", "GET", "/api/v1/templates/{template}/versions/1", None),
+    ("b", "POST", "/api/v1/templates/{template}/publish", {"note": "hijack"}),
+    ("b", "POST", "/api/v1/templates/{template}/rollback", {"version": 1}),
+    ("b", "POST", "/api/v1/templates/{template}/preview", {"data": {}}),
     ("b", "DELETE", "/api/v1/preferences/{preference}", None),
     ("b", "GET", "/api/v1/preferences?recipient=ada", None),   # B has no recipient "ada"
     ("b", "POST", "/api/v1/dead-letters/{dead_letter}/retry", None),
@@ -436,6 +441,9 @@ COVERED = {
     ("GET", "/api/v1/workflows/{workflow_id}"), ("PUT", "/api/v1/workflows/{workflow_id}"),
     ("DELETE", "/api/v1/workflows/{workflow_id}"), ("GET", "/api/v1/templates/{template_id}"),
     ("PUT", "/api/v1/templates/{template_id}"), ("DELETE", "/api/v1/templates/{template_id}"),
+    ("GET", "/api/v1/templates/{template_id}/versions"), ("GET", "/api/v1/templates/{template_id}/versions/{version}"),
+    ("POST", "/api/v1/templates/{template_id}/publish"), ("POST", "/api/v1/templates/{template_id}/rollback"),
+    ("POST", "/api/v1/templates/{template_id}/preview"),
     ("DELETE", "/api/v1/preferences/{preference_id}"), ("GET", "/api/v1/preferences"),
     ("POST", "/api/v1/dead-letters/{dead_letter_id}/retry"), ("DELETE", "/api/v1/tenant/api-keys/{key_id}"),
     ("DELETE", "/api/v1/tenant/members/{membership_id}"), ("POST", "/api/v1/tenant/api-keys/{key_id}/rotate"),
@@ -449,6 +457,7 @@ COVERED = {
     ("POST", "/api/v1/inbox/{message_id}/archive"), ("POST", "/api/v1/inbox/{message_id}/unarchive"),
     ("GET", "/api/v1/inbox"), ("GET", "/api/v1/inbox/unread-count"), ("POST", "/api/v1/inbox/read-all"),
     # creates / writes that land in the caller's tenant
+    ("POST", "/api/v1/templates/preview"),   # renders what the caller sends; touches no stored data
     ("POST", "/api/v1/providers"), ("POST", "/api/v1/templates"), ("POST", "/api/v1/workflows"),
     ("POST", "/api/v1/events"), ("POST", "/api/v1/devices"), ("PUT", "/api/v1/preferences"),
     ("POST", "/api/v1/tenant/api-keys"), ("POST", "/api/v1/tenant/members"),
