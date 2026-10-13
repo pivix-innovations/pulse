@@ -83,10 +83,11 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | ID | Item | Pri | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | G9 | Delivery receipts (webhooks) for Twilio, Resend, SendGrid | High | M | [x] | Per-provider signed endpoint `POST /webhooks/p/{provider_id}`; attempts keep the provider message id; confirmation is only expected once receipts are set up, so unconfigured providers never get falsely escalated. Needs `PULSE_API__PUBLIC_URL` for Twilio. |
-| G10 | SES delivery/bounce events via SNS | Medium | M | [ ] | SNS subscription confirmation + message signature verification. SES attempts stay `sent` until this lands. |
+| G10 | SES delivery/bounce events via SNS | Medium | M | [x] | Verifies SNS signatures (cert from AWS SNS hosts only, topic pinned to the provider's ARN) and auto-confirms the subscription. Verified against real SNS signatures with LocalStack (`tests/integration`, set `LOCALSTACK_URL`); SES sending itself needs real AWS (LocalStack SES v2 is Pro). |
 | G11 | UI: webhook URL panel, provider column and failover trail on attempts | Medium | S | [x] | |
-| G12 | UI: drag-to-reorder chains, workflow editor without raw JSON | Medium | M | [ ] | Chain editor uses ↑/↓; the rest of the workflow definition is still a JSON textarea. |
-| G13 | UI: per-provider health (success rate, last failure) | Medium | M | [ ] | Needs attempts-by-provider metrics. |
+| G12 | UI: structured workflow editor with drag-to-reorder chains | Medium | M | [x] | Channels, templates, fallbacks and provider chains in a form; "Edit as JSON" kept for anything else. |
+| G13 | Provider health (success rate, latency, last failure) | Medium | M | [x] | Every provider call is logged (outcome + latency; recipient errors excluded) and pruned after 30 days; `GET /providers/health`; status pills in the console. |
+| G14 | Circuit breaker: skip a provider that is down, probe it after a cooldown | High | M | [ ] | Builds on G13 so failover doesn't pay the timeout on every message while a provider is out. |
 | H1 | Push error classification (retryable / permanent / failover) | High | S | [x] | Timeouts and 5xx fail over; invalid tokens do not. |
 | H2 | Deactivate stale device tokens on `UNREGISTERED` | High | S | [x] | Stop retrying dead tokens on every send. |
 | H3 | FCM per-provider app instances (no process-global init) | High | S | [x] | Credentials come from the saved provider's secrets. |
