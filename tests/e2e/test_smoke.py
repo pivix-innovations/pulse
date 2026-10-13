@@ -73,6 +73,23 @@ def test_duplicate_event_is_idempotent(stack):
     assert len(stack.notification(first)["attempts"]) == 2
 
 
+def test_a_workflow_without_a_chain_ignores_other_workflows_providers(stack):
+    # A saved provider that would fail every send, used only by one workflow...
+    broken = stack.api("POST", "/providers", json={
+        "channel": "email", "name": "smtp", "label": "Only for workflow A", "priority": 99,
+        "config": {"host": "127.0.0.1", "port": 1, "from_address": "a@example.com", "use_tls": False},
+    }).json()["id"]
+    stack.api("POST", "/workflows", json=workflow("a", "user.a", ["email"], chains={"email": [broken]}))
+    stack.api("POST", "/workflows", json=workflow("b", "user.b", ["email"]))  # no chain
+
+    # ...must not touch workflow B: it goes out through the env default.
+    n = settled(stack, send(stack, "user.b"))
+    [attempt] = n["attempts"]
+    assert n["status"] == "completed" and attempt["status"] == "sent"
+    assert attempt["provider_id"] is None
+    assert attempt["provider_message_id"].startswith("console-")
+
+
 def test_failover_trail_and_circuit_breaker_on_real_redis(stack):
     # A relay that refuses connections, then a working fallback.
     dead = stack.api("POST", "/providers", json={
