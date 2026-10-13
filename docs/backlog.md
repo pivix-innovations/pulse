@@ -94,7 +94,7 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | H4 | Unregister device endpoint | Medium | S | [ ] | `DELETE /devices`. |
 | H5 | Push payload options: notification block, TTL, priority, badge | Medium | M | [ ] | |
 | H6 | APNs driver | Medium | M | [ ] | |
-| H7 | SSE: tests for replay, ack-to-settle, no-subscriber failure, fan-out | High | S | [~] | Provider publish/no-subscriber tests done; stream replay and Redis fan-out tests still open (the stream generator needs a seam to be testable). |
+| H7 | SSE: tests for replay, ack-to-settle, no-subscriber failure, fan-out | High | S | [x] | Stream body extracted (`stream_events`); unit, API, real-Redis and real-stack tests. |
 | H8 | SSE: short-lived stream token instead of API key in the URL | Medium | M | [ ] | |
 | H9 | Persistent inbox (see E1) | High | L | [ ] | |
 

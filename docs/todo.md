@@ -2,7 +2,7 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 268 passing, 48 skipped by default (`pytest`; the skips need infrastructure: 9 e2e tests and 7 Redis limiter tests with `PULSE_E2E=1`, 31 Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`)  
+> **Test Suite**: 278 passing, 60 skipped by default (`pytest`; the skips need infrastructure: 13 e2e tests and 15 Redis tests with `PULSE_E2E=1`, 31 Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`; with everything running: 337 passed)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
 > **Schema Migrations**: Linear head `f6e9b1c3d846` (11 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
@@ -57,6 +57,7 @@
 | **G15** | Per-Workflow Provider Isolation | **High** | **[x] COMPLETED** | A saved provider is used only by workflows whose chains name it; a workflow with no usable chain for a channel falls back to the env default, never to another workflow's provider. Removed the tenant-wide "highest priority provider" lookup (`get_active_by_channel`). Found by the chaos suite; covered by unit and e2e tests. |
 | **A4** | PostgreSQL-Backed Repository Tests | **High** | **[x] COMPLETED** | `tests/repositories/`: each contract assertion runs against the in-memory fakes and, with `PULSE_PG_TESTS=1` (`make test-pg`), real Postgres on a throwaway migrated database. Covers attempts (stuck/stale/unconfirmed queries, receipt lookup), outbox, notifications (due/settleable/paging), provider call stats (percentile SQL), providers, events, workflows, recipients, devices, preferences, dead letters, tenant isolation, unique/cascade constraints, and `SKIP LOCKED` (two concurrent transactions never claim the same outbox entry, stuck attempt, due notification or stale attempt). Found and fixed two fake/DB mismatches (p95 latency interpolation, dead-letter ordering). Runs in CI. |
 | **C1** | Per-Tenant Rate Limiting & Send Quotas | **High** | **[x] COMPLETED** | `POST /events` is limited per tenant by an atomic Redis token bucket (`jobqueue/rate_limiter.py`, Lua, Redis clock) plus a daily event quota (UTC day). Over the limit: `429` with `Retry-After` and `X-RateLimit-Reason` (`rate` or `quota`); accepted responses carry `X-RateLimit-Remaining` / `X-Quota-Remaining`. Defaults in `PULSE_RATE_LIMIT__*`; per-tenant overrides on the `tenants` table (migration `f6e9b1c3d846`), editable by platform admins (`PATCH /admin/tenants/{id}`, null = default) and visible to the tenant at `GET /tenant/usage`. Rejected events (422) refund their quota unit; a Redis outage fails open. Console: Tenants page "Limits" editor and an Overview usage card. Tested at unit, API, real-Redis (atomicity under 60 concurrent requests) and real-stack level. Note: the quota counts events accepted by the API, including idempotent re-sends. |
+| **H7** | SSE Replay, Fan-Out and Delivery Tests | **High** | **[x] COMPLETED** | The stream body is now `api.v1.sse.stream_events` (testable): replay-first-then-live ordering, `replayed` flag, SSE ids = attempt ids (so `Last-Event-ID` resumes), heartbeats, release on disconnect. API tests pin which attempts a reconnect replays (only that recipient's sent, unacknowledged in-app attempts; none on first connect; none after ack). Real Redis: an event published by one process reaches streams held by another, all tabs of a recipient get it, nothing leaks across recipients or tenants, connection counters clean up and carry a TTL. Real stack: worker process → Redis → API process → client, ack settles, reconnect replays until acked, no listener fails fast without retry. Found and fixed: `Subscription.get` returned early when redis-py swallowed the subscribe confirmation (spurious heartbeat, first read empty). |
 | **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
 | **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
 | **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
@@ -70,7 +71,6 @@
 | **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
 | **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
-| **H7** | SSE Replay & Redis Fan-Out Test Seams | High | S | **[~] IN PROGRESS** | Unit tests for provider publish complete; stream replay and multi-instance fan-out tests need mock generator seam. |
 | **H8** | Short-Lived Stream Tokens for SSE | Medium | M | **[ ] OPEN** | Replace API key in SSE URL query parameter with short-lived ticket/token. |
 | **C2** | Real Sentinel Service Integration | High | M | **[ ] OPEN** | Connect external auth/tenant microservice with caching, circuit breaker, and timeouts. |
 | **C3** | Tenant Data Isolation Test Suite | High | S | **[ ] OPEN** | Integration tests asserting 404 on all cross-tenant resource access attempts. |
@@ -109,7 +109,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **268 passing tests** in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **278 passing tests** (337 with infrastructure) in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
@@ -279,7 +279,7 @@ Across 50+ commits over two days, the project advanced from a draft architecture
 
 ### Sprint 1: Reliability & CI
 
-A1, A2 and A3 are done (see the tracker). A4 is done too. Remaining reliability work: H7 (SSE replay / fan-out tests).
+A1, A2 and A3 are done (see the tracker). A4 and H7 are done too.
 
 
 ---
