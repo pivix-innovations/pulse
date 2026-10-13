@@ -27,7 +27,7 @@
 
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| C1 | Per-tenant rate limiting & quotas | High | M | Redis token bucket on `POST /events`; per-tenant daily send caps. |
+| C1 | Per-tenant rate limiting & quotas ✅ | High | M | Redis token bucket on `POST /events`; per-tenant daily send caps. |
 | C2 | Sentinel client: replace the stub | High | M | `clients/sentinel_client.py` is in-memory; wire the real user/tenant lookup with caching and timeouts. |
 | C3 | Tenant isolation tests | High | S | Assert every repository query and API route is tenant-scoped (cross-tenant read/write attempts return 404). |
 | C4 | API key rotation & scopes | Medium | M | Expiry, last-used tracking, revocation, read-only vs ingest scopes. |

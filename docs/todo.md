@@ -2,10 +2,10 @@
 
 > **Document Status**: Audit Complete & Production Provider Milestone Verified  
 > **Last Updated**: October 13, 2026  
-> **Test Suite**: 246 passing, 38 skipped by default (`pytest`; the skips need infrastructure: 6 e2e tests with `PULSE_E2E=1`, 31 Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`)  
+> **Test Suite**: 268 passing, 48 skipped by default (`pytest`; the skips need infrastructure: 9 e2e tests and 7 Redis limiter tests with `PULSE_E2E=1`, 31 Postgres repository cases with `PULSE_PG_TESTS=1`, 1 LocalStack test with `LOCALSTACK_URL`)  
 > **Linter**: 0 errors / 0 warnings (`ruff check .`)  
 > **Runtime Startup**: `main.create_app()` boots cleanly (verified with the in-memory harness; not yet against live Postgres/Redis)  
-> **Schema Migrations**: Linear head `e4c7f9a1b624` (10 revisions; SQL generated offline, not yet applied to a live database)
+> **Schema Migrations**: Linear head `f6e9b1c3d846` (11 revisions; applied from scratch to live Postgres by the e2e and repository suites, and `alembic check` reports no model drift)
 
 ---
 
@@ -56,6 +56,7 @@
 | **A3** | CI Pipeline | **High** | **[x] COMPLETED** | `.github/workflows/ci.yml`: ruff + unit tests; e2e job on Postgres/Redis service containers with `alembic upgrade head`, `alembic check` and the smoke/chaos suite (logs uploaded on failure); LocalStack SNS job, non-blocking until proven on GitHub runners. Verified locally with env vars only (no `.env`); the workflow itself has not run on GitHub yet. |
 | **G15** | Per-Workflow Provider Isolation | **High** | **[x] COMPLETED** | A saved provider is used only by workflows whose chains name it; a workflow with no usable chain for a channel falls back to the env default, never to another workflow's provider. Removed the tenant-wide "highest priority provider" lookup (`get_active_by_channel`). Found by the chaos suite; covered by unit and e2e tests. |
 | **A4** | PostgreSQL-Backed Repository Tests | **High** | **[x] COMPLETED** | `tests/repositories/`: each contract assertion runs against the in-memory fakes and, with `PULSE_PG_TESTS=1` (`make test-pg`), real Postgres on a throwaway migrated database. Covers attempts (stuck/stale/unconfirmed queries, receipt lookup), outbox, notifications (due/settleable/paging), provider call stats (percentile SQL), providers, events, workflows, recipients, devices, preferences, dead letters, tenant isolation, unique/cascade constraints, and `SKIP LOCKED` (two concurrent transactions never claim the same outbox entry, stuck attempt, due notification or stale attempt). Found and fixed two fake/DB mismatches (p95 latency interpolation, dead-letter ordering). Runs in CI. |
+| **C1** | Per-Tenant Rate Limiting & Send Quotas | **High** | **[x] COMPLETED** | `POST /events` is limited per tenant by an atomic Redis token bucket (`jobqueue/rate_limiter.py`, Lua, Redis clock) plus a daily event quota (UTC day). Over the limit: `429` with `Retry-After` and `X-RateLimit-Reason` (`rate` or `quota`); accepted responses carry `X-RateLimit-Remaining` / `X-Quota-Remaining`. Defaults in `PULSE_RATE_LIMIT__*`; per-tenant overrides on the `tenants` table (migration `f6e9b1c3d846`), editable by platform admins (`PATCH /admin/tenants/{id}`, null = default) and visible to the tenant at `GET /tenant/usage`. Rejected events (422) refund their quota unit; a Redis outage fails open. Console: Tenants page "Limits" editor and an Overview usage card. Tested at unit, API, real-Redis (atomicity under 60 concurrent requests) and real-stack level. Note: the quota counts events accepted by the API, including idempotent re-sends. |
 | **H1** | Push Error Classification | **High** | **[x] COMPLETED** | Classifies FCM errors: dead token (`UNREGISTERED`, sender mismatch), outage/quota (retry + fail over), bad credentials, and invalid request (`INVALID_ARGUMENT`: permanent, never prunes tokens). |
 | **H2** | Stale Push Token Pruning | **High** | **[x] COMPLETED** | Deletes device tokens FCM reports dead, on success and on failure, so they are not retried on every send. |
 | **H3** | Per-Provider FCM Instances | **High** | **[x] COMPLETED** | FCM instances initialized dynamically from provider credentials without global singleton collision. |
@@ -71,7 +72,6 @@
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
 | **H7** | SSE Replay & Redis Fan-Out Test Seams | High | S | **[~] IN PROGRESS** | Unit tests for provider publish complete; stream replay and multi-instance fan-out tests need mock generator seam. |
 | **H8** | Short-Lived Stream Tokens for SSE | Medium | M | **[ ] OPEN** | Replace API key in SSE URL query parameter with short-lived ticket/token. |
-| **C1** | Per-Tenant Rate Limiting & Send Quotas | High | M | **[ ] OPEN** | Redis token bucket algorithm on `POST /events`; enforce tenant daily send caps. |
 | **C2** | Real Sentinel Service Integration | High | M | **[ ] OPEN** | Connect external auth/tenant microservice with caching, circuit breaker, and timeouts. |
 | **C3** | Tenant Data Isolation Test Suite | High | S | **[ ] OPEN** | Integration tests asserting 404 on all cross-tenant resource access attempts. |
 | **C4** | API Key Scopes & Rotation | Medium | M | **[ ] OPEN** | Ingest-only vs Admin scopes; key expiration and rotation mechanics. |
@@ -109,7 +109,7 @@ Pulse is an enterprise-grade, event-driven notification engine built on Clean Ar
 
 ### Progress Verified (October 12–13, 2026)
 Across 50+ commits over two days, the project advanced from a draft architecture with critical lifecycle bugs to a robust delivery engine with live production drivers and receipt handling:
-- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **246 passing tests** in `pytest`.
+- **Test Suite**: Expanded from 40 $\rightarrow$ 66 $\rightarrow$ **268 passing tests** in `pytest`.
 - **Linter & Types**: **0 errors / 0 warnings** in `ruff check .`.
 - **Database Migrations**: 10 linear revisions up to head `e4c7f9a1b624` (offline SQL generation only).
 - **Production Drivers**: Amazon SES v2, Twilio SMS, Resend, SendGrid, Firebase Cloud Messaging, SMTP, SSE (HTTP-API drivers are covered by mocked-transport tests, not live-service tests).
@@ -286,14 +286,6 @@ A1, A2 and A3 are done (see the tracker). A4 is done too. Remaining reliability 
 
 ### Sprint 2: Security & Rate Limiting
 
-#### C1: Per-Tenant Rate Limiting & Quotas
-- **Priority**: High | **Effort**: M
-- **Problem**: A rogue tenant can overwhelm outbox relays and provider APIs with event flooding.
-- **Implementation**:
-  1. Implement Redis Token Bucket in `jobqueue/rate_limiter.py`.
-  2. In `api/v1/events.py`, evaluate rate limit before accepting event:
-     - Return `HTTP 429 Too Many Requests` with `Retry-After` header when bucket is empty.
-  3. Support per-tenant daily quota limits stored on the `tenants` table.
 
 #### H4: Device Token Unregistration Endpoint
 - **Priority**: Medium | **Effort**: S
