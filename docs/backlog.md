@@ -56,7 +56,7 @@
 | E3b | Digest extras: rolling windows, daily-at-9am schedule, per-channel digests | Low | M | Today the window is fixed from the first event and covers every channel of the workflow. |
 | E4 | Template versioning & preview ✅ | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
 | E4b | Template diff view and per-version usage | Low | S | Show a text diff between versions in the console; record which version each message was rendered from. |
-| E5 | Subscriber preference center | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. |
+| E5 | Subscriber preference center [~] | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. Unsubscribe link and endpoint shipped (`{{ unsubscribe_url }}`, `/api/v1/unsubscribe`); per-category opt-out still open. |
 | E6 | Chat channels (Slack/Teams webhook) | Low | M | New `Channel` enum value plus worker. |
 
 ## Phase F — Console UI & DX

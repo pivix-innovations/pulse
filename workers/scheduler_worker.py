@@ -20,6 +20,7 @@ from repositories.uow import SqlAlchemyUnitOfWork
 from services.notification_service import NotificationService
 from services.reconciliation_service import ReconciliationService
 from services.rendering_service import RenderingService
+from services.unsubscribe import UnsubscribeLinks
 from services.digest_service import DigestFlusher
 from services.scheduling_service import SchedulingService
 from services.sequence_service import SequenceEngine, StepRunner
@@ -49,8 +50,9 @@ async def main() -> None:
     def uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database.session_factory)
 
+    links = UnsubscribeLinks(settings.security.unsubscribe_key, settings.api.public_url)
     relay = OutboxRelay(uow_factory, ArqJobPublisher(pool), settings.outbox)
-    sweep = ReconciliationService(uow_factory, RenderingService(), settings.reconciliation)
+    sweep = ReconciliationService(uow_factory, RenderingService(unsubscribe=links), settings.reconciliation)
     sentinel = build_recipient_client(uow_factory, settings)
     scheduler = SchedulingService(
         uow_factory=uow_factory,
@@ -58,13 +60,13 @@ async def main() -> None:
             uow_factory=uow_factory,
             sentinel=sentinel,
             registry=WorkflowRegistry(),
-            rendering=RenderingService(),
+            rendering=RenderingService(unsubscribe=links),
         ),
         sentinel=sentinel,
     )
 
-    digests = DigestFlusher(uow_factory, RenderingService(), settings.reconciliation)
-    steps = StepRunner(uow_factory, SequenceEngine(RenderingService()), settings.reconciliation)
+    digests = DigestFlusher(uow_factory, RenderingService(unsubscribe=links), settings.reconciliation)
+    steps = StepRunner(uow_factory, SequenceEngine(RenderingService(unsubscribe=links)), settings.reconciliation)
 
     stop = asyncio.Event()
 

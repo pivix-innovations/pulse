@@ -22,6 +22,7 @@ from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
 from api.v1.preferences import router as preferences_router
 from api.v1.suppressions import router as suppressions_router
+from api.v1.unsubscribe import router as unsubscribe_router
 from api.v1.providers import catalog_router as provider_catalog_router
 from api.v1.providers import router as providers_router
 from api.v1.sse import router as sse_router
@@ -38,6 +39,7 @@ from services.metrics_service import MetricsService
 from services.rate_limit_service import RateLimitService
 from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
+from services.unsubscribe import UnsubscribeLinks
 from sse.registry import SseConnectionRegistry
 from telemetry.metrics import configure_metrics, get_metrics
 from telemetry.router import router as telemetry_router
@@ -68,11 +70,12 @@ async def lifespan(app: FastAPI):
     def uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(app.state.database.session_factory)
 
+    app.state.unsubscribe_links = UnsubscribeLinks(settings.security.unsubscribe_key, settings.api.public_url)
     app.state.notification_service = NotificationService(
         uow_factory=uow_factory,
         sentinel=build_recipient_client(uow_factory, settings),
         registry=WorkflowRegistry(),
-        rendering=RenderingService(),
+        rendering=RenderingService(unsubscribe=app.state.unsubscribe_links),
     )
     app.state.rate_limit_service = RateLimitService(
         RedisRateLimiter(app.state.redis), uow_factory, settings.rate_limit
@@ -142,6 +145,7 @@ def create_app() -> FastAPI:
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(preferences_router, prefix="/api/v1")
     app.include_router(suppressions_router, prefix="/api/v1")
+    app.include_router(unsubscribe_router, prefix="/api/v1")
     app.include_router(provider_catalog_router, prefix="/api/v1")
     app.include_router(providers_router, prefix="/api/v1")
     app.include_router(metrics_router, prefix="/api/v1")

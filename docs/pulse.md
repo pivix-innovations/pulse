@@ -225,6 +225,9 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
   list. Later sends to that address on that channel are skipped, whichever recipient or workflow they come from; other
   channels still go out. Admins can also add or remove entries by hand. Addresses are matched case-insensitively
   (email) and without spaces (phone). The `pulse.suppressed_sends` metric counts skips.
+  - **Unsubscribe links:** with `PULSE_SECURITY__UNSUBSCRIBE_KEY` and `PULSE_API__PUBLIC_URL` set, every template can use
+    `{{ unsubscribe_url }}`: a signed link (no login) to a confirm page whose button adds the address to the list. The
+    same URL accepts an RFC 8058 one-click `POST`, so it can go in a `List-Unsubscribe` header too.
   - **Business value:** protects sender reputation (repeated sends to dead addresses get a domain blocked) and honours
     opt-outs the vendor has already recorded.
 - **Business value:** answers "did the customer get it?" without opening a vendor dashboard. Bounces are known quickly

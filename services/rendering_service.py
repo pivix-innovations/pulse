@@ -6,6 +6,7 @@ from typing import Any, Mapping
 from domain.enums import TemplateFormat
 from renderers.jinja_renderer import JinjaRenderer
 from renderers.markdown_renderer import MarkdownRenderer
+from services.unsubscribe import UnsubscribeLinks
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +26,9 @@ class RenderingService:
         self,
         jinja: JinjaRenderer | None = None,
         markdown_renderer: MarkdownRenderer | None = None,
+        unsubscribe: UnsubscribeLinks | None = None,
     ) -> None:
+        self.unsubscribe = unsubscribe
         self._jinja = jinja or JinjaRenderer()
         self._markdown = markdown_renderer or MarkdownRenderer()
 

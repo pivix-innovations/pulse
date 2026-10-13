@@ -39,6 +39,11 @@ def build_attempt(
 ) -> DeliveryAttempt:
     """Render one channel. `payload` overrides the notification's (digests render the latest event);
     `extra` adds template variables (digests add `digest`)."""
+    link = rendering.unsubscribe.url_for(
+        notification.tenant_id, template.channel, _address_for(recipient, template.channel)
+    ) if rendering.unsubscribe else None
+    if link:
+        extra = {"unsubscribe_url": link, **(extra or {})}
     rendered = rendering.render(
         body=template.body,
         subject=template.subject,

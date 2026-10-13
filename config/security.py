@@ -13,3 +13,7 @@ class SecuritySettings(ConfigSection):
     # rotate (first encrypts, all decrypt). Generate one with:
     #   python -c "from services.secrets import generate_key; print(generate_key())"
     secrets_key: str = ""
+
+    # Signs the unsubscribe links Pulse adds to messages (template variable `unsubscribe_url`).
+    # Needs `api.public_url` too; empty disables the links. Any long random string works.
+    unsubscribe_key: str = ""
