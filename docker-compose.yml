@@ -22,7 +22,7 @@ services:
   # Metrics/traces backend (OTLP). Opt in:  docker compose --profile observability up -d openobserve
   # Console: http://localhost:5080  (dev credentials below; change for anything shared)
   openobserve:
-      image: public.ecr.aws/zinclabs/openobserve:latest
+      image: o2cr.ai/openobserve/openobserve-enterprise:v1.0.4
       profiles: ['observability']
       restart: unless-stopped
       environment:
