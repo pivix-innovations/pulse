@@ -540,10 +540,10 @@ function emptyState(title, hint) {
 
 /* ═══ Modal ═══════════════════════════════════════════════ */
 
-function openModal(title, bodyHtml, { onSubmit, submitLabel = "Save" } = {}) {
+function openModal(title, bodyHtml, { onSubmit, submitLabel = "Save", width } = {}) {
   const root = $("#modal-root");
   root.innerHTML = `<div class="modal-backdrop">
-    <div class="modal" role="dialog" aria-modal="true">
+    <div class="modal" role="dialog" aria-modal="true" ${width ? `style="max-width:${width}"` : ""}>
       <div class="modal-head">
         <div class="modal-title">${esc(title)}</div>
         <button class="x-btn" data-close aria-label="Close">
@@ -1145,76 +1145,37 @@ function renderTemplates(el) {
 
 /* ═══ Workflows ═══════════════════════════════════════════ */
 
-const WORKFLOW_DEF_PLACEHOLDER = `{
-  "channels": [
-    {"channel": "in_app", "template": "welcome-inapp"},
-    {"channel": "email", "template": "welcome-email"}
-  ],
-  "fallbacks": {"in_app": "email"}
-}`;
+/* ── Workflow editor ─────────────────────────────────────────────────
+   Structured editing of a workflow definition: channels with their
+   templates, "if not delivered, fall back to" rules, and per-channel
+   provider chains (saved providers in priority order, first tried first).
+   The editor keeps a hidden `definition` input in sync; an "Edit as JSON"
+   switch is there for anything the form doesn't cover. */
 
-/* Per-channel provider chain: saved providers in priority order (first is tried first). */
-function chainEditorHtml() {
-  return `<div id="chain-editor"></div><input type="hidden" name="provider_chains" value="{}">`;
+const WF_CHANNELS = ["email", "push", "sms", "in_app"];
+const WF_FORMATS = ["markdown", "html", "text"];
+const WF_DEFAULT_BODY = { email: "Hi {{ recipient.external_ref }},\n\n", push: "", sms: "", in_app: "" };
+
+function wfStateFromDefinition(def = {}) {
+  const channels = [
+    ...(def.channels || []).map(c => ({ ...c, fallbackOnly: false })),
+    ...(def.fallback_templates || []).map(c => ({ ...c, fallbackOnly: true })),
+  ].map(c => ({ channel: c.channel, subject: c.subject || "", body: c.body || "", format: c.format || "markdown", fallbackOnly: c.fallbackOnly }));
+  return { channels, fallbacks: { ...(def.fallbacks || {}) }, chains: JSON.parse(JSON.stringify(def.provider_chains || {})) };
 }
 
-function mountChainEditor(root, saved, initial, channelsOf) {
-  const host = root.querySelector("#chain-editor");
-  const hidden = root.querySelector('input[name="provider_chains"]');
-  const textarea = root.querySelector('textarea[name="definition"]');
-  const chains = JSON.parse(JSON.stringify(initial || {}));
-  const byId = Object.fromEntries(saved.map(p => [p.id, p]));
-
-  const channels = () => {
-    try { return channelsOf(JSON.parse(textarea.value)); } catch { return Object.keys(chains); }
+function wfDefinition(st) {
+  const enc = c => ({ channel: c.channel, subject: c.subject || null, body: c.body, format: c.format });
+  const present = new Set(st.channels.map(c => c.channel));
+  const def = {
+    channels: st.channels.filter(c => !c.fallbackOnly).map(enc),
+    fallbacks: Object.fromEntries(Object.entries(st.fallbacks).filter(([src, dst]) => dst && present.has(src) && present.has(dst))),
   };
-  const draw = () => {
-    hidden.value = JSON.stringify(Object.fromEntries(Object.entries(chains).filter(([, v]) => v.length)));
-    const chs = channels();
-    host.innerHTML = `<div class="field"><label>Providers</label>
-      <div class="secret-hint" style="margin:-2px 0 8px">Pick saved providers for each channel. They're tried top to bottom; the next one is used only if the one above fails or times out.</div></div>` +
-      chs.map(ch => {
-        const ids = chains[ch] || [];
-        const options = saved.filter(p => p.channel === ch && p.is_active && !ids.includes(p.id));
-        return `<div class="chain" data-ch="${ch}">
-          <div class="chain-head"><span>${badge(chLabel(ch))}</span></div>
-          ${ids.map((id, i) => { const p = byId[id]; return `
-            <div class="chain-item">
-              <span class="rank">${i + 1}</span>
-              ${p ? logoImg(p) : ""}
-              <span class="grow">${p ? esc(p.label) : `<span class="muted">Unknown provider</span>`}</span>
-              <button type="button" class="btn sm" data-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
-              <button type="button" class="btn sm" data-down="${i}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
-              <button type="button" class="btn sm danger" data-rm="${i}" aria-label="Remove">✕</button>
-            </div>`; }).join("")}
-          ${options.length ? `<select data-add><option value="">+ Add a provider…</option>${options.map(p => `<option value="${esc(p.id)}">${esc(p.label)} (${esc(p.catalog?.name || p.name)})</option>`).join("")}</select>` : ""}
-          ${!ids.length ? `<div class="chain-note">${options.length ? "No provider chosen — this channel uses your default." : `No saved ${chLabel(ch)} providers. Add one on the Providers page.`}</div>` : ""}
-        </div>`;
-      }).join("");
-    host.querySelectorAll(".chain").forEach(box => {
-      const ch = box.dataset.ch;
-      box.querySelector("[data-add]")?.addEventListener("change", e => {
-        if (e.target.value) { (chains[ch] ||= []).push(e.target.value); draw(); }
-      });
-      box.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => { chains[ch].splice(+b.dataset.rm, 1); draw(); }));
-      box.querySelectorAll("[data-up]").forEach(b => b.addEventListener("click", () => { const i = +b.dataset.up; [chains[ch][i - 1], chains[ch][i]] = [chains[ch][i], chains[ch][i - 1]]; draw(); }));
-      box.querySelectorAll("[data-down]").forEach(b => b.addEventListener("click", () => { const i = +b.dataset.down; [chains[ch][i + 1], chains[ch][i]] = [chains[ch][i], chains[ch][i + 1]]; draw(); }));
-    });
-  };
-  textarea.addEventListener("change", draw);
-  draw();
-}
-
-const workflowChannels = def => [...new Set([...(def.channels || []), ...(def.fallback_templates || [])].map(c => c.channel))];
-
-async function openWorkflowModal(title, w, { submitLabel, onSubmit }) {
-  let saved = [];
-  try { saved = await api("/providers"); } catch { /* chain editor degrades to empty */ }
-  const def = w?.definition ? { ...w.definition } : null;
-  const chains = def?.provider_chains || {};
-  if (def) delete def.provider_chains;   // edited via the chain editor, not the JSON box
-  openModal(title, workflowForm({ ...(w || {}), definition: def }) + chainEditorHtml(), { submitLabel, onSubmit });
-  mountChainEditor($("#modal-root"), saved, chains, workflowChannels);
+  const fb = st.channels.filter(c => c.fallbackOnly).map(enc);
+  if (fb.length) def.fallback_templates = fb;
+  const chains = Object.fromEntries(Object.entries(st.chains).filter(([ch, ids]) => ids.length && present.has(ch)));
+  if (Object.keys(chains).length) def.provider_chains = chains;
+  return def;
 }
 
 function workflowForm(w = {}) {
@@ -1223,22 +1184,147 @@ function workflowForm(w = {}) {
       <div class="field"><label>Name</label><input name="name" required value="${esc(w.name || "")}" placeholder="welcome"></div>
       <div class="field"><label>Event type</label><input name="event_type" required value="${esc(w.event_type || "")}" placeholder="user.signed_up"></div>
     </div>
-    <div class="field"><label>Definition (JSON)</label>
-      <textarea name="definition" rows="12" required spellcheck="false">${esc(w.definition ? JSON.stringify(w.definition, null, 2) : WORKFLOW_DEF_PLACEHOLDER)}</textarea></div>
-    <label class="check"><input type="checkbox" name="is_active" ${w.is_active !== false ? "checked" : ""}> Active</label>`;
+    <label class="check" style="margin-bottom:14px"><input type="checkbox" name="is_active" ${w.is_active !== false ? "checked" : ""}> Active</label>
+    <div id="wf-editor"></div>
+    <input type="hidden" name="definition" value="{}">`;
 }
 
 function workflowFromForm(fd) {
   let definition;
   try { definition = JSON.parse(fd.get("definition")); }
   catch { throw new Error("Definition is not valid JSON"); }
-  const chains = JSON.parse(fd.get("provider_chains") || "{}");
-  if (Object.keys(chains).length) definition.provider_chains = chains;
-  else delete definition.provider_chains;
   return {
     name: fd.get("name"), event_type: fd.get("event_type"),
     definition, is_active: fd.get("is_active") === "on",
   };
+}
+
+function mountWorkflowEditor(root, saved, initialDef) {
+  const host = root.querySelector("#wf-editor");
+  const hidden = root.querySelector('input[name="definition"]');
+  const byId = Object.fromEntries(saved.map(p => [p.id, p]));
+  let st = wfStateFromDefinition(initialDef);
+  let jsonMode = false;
+  let dragFrom = null;
+
+  const sync = () => { hidden.value = JSON.stringify(wfDefinition(st)); };
+
+  function chainHtml(c) {
+    const ids = st.chains[c.channel] || [];
+    const options = saved.filter(p => p.channel === c.channel && p.is_active && !ids.includes(p.id));
+    return `<div class="field" style="margin-bottom:0"><label>Providers <span class="muted" style="font-weight:400">— tried top to bottom; next one only if the one above fails or times out</span></label>
+      <div data-chain="${c.channel}">
+      ${ids.map((id, i) => { const p = byId[id]; return `
+        <div class="chain-item" draggable="true" data-idx="${i}">
+          <span class="muted" style="cursor:grab" title="Drag to reorder">⋮⋮</span>
+          <span class="rank">${i + 1}</span>
+          ${p ? logoImg(p) : ""}
+          <span class="grow">${p ? esc(p.label) : `<span class="muted">Unknown provider</span>`}</span>
+          <button type="button" class="btn sm" data-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+          <button type="button" class="btn sm" data-down="${i}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+          <button type="button" class="btn sm danger" data-rm="${i}" aria-label="Remove">✕</button>
+        </div>`; }).join("")}
+      ${options.length ? `<select data-add><option value="">+ Add a provider…</option>${options.map(p => `<option value="${esc(p.id)}">${esc(p.label)} (${esc(p.catalog?.name || p.name)})</option>`).join("")}</select>` : ""}
+      ${!ids.length ? `<div class="chain-note">${options.length ? "None chosen — Pulse's default for this channel is used." : `No saved ${chLabel(c.channel)} providers — Pulse's default is used. Add one on the Providers page to choose.`}</div>` : ""}
+      </div></div>`;
+  }
+
+  function channelHtml(c, i) {
+    const others = st.channels.filter(o => o.channel !== c.channel);
+    const showSubject = c.channel !== "sms";
+    return `<div class="chain" data-card="${i}">
+      <div class="chain-head"><span>${badge(chLabel(c.channel))} ${c.fallbackOnly ? `<span class="muted" style="font-weight:400">fallback only</span>` : ""}</span>
+        <button type="button" class="btn sm danger" data-del-ch="${i}">Remove channel</button></div>
+      <label class="check" style="margin-bottom:10px"><input type="checkbox" data-fbonly="${i}" ${c.fallbackOnly ? "checked" : ""}> Only send as a fallback (not on every event)</label>
+      ${showSubject ? `<div class="field"><label>${c.channel === "email" ? "Subject" : "Title"}</label><input data-f="subject" data-i="${i}" value="${esc(c.subject)}" placeholder="Welcome, {{ recipient.external_ref }}!"></div>` : ""}
+      <div class="field"><label>Message</label><textarea data-f="body" data-i="${i}" rows="4" spellcheck="false">${esc(c.body)}</textarea></div>
+      <div class="row">
+        <div class="field"><label>Format</label><select data-f="format" data-i="${i}">${WF_FORMATS.map(f => `<option ${f === c.format ? "selected" : ""}>${f}</option>`).join("")}</select></div>
+        ${!c.fallbackOnly && others.length ? `<div class="field"><label>If not delivered, fall back to</label>
+          <select data-fb="${i}"><option value="">Nothing</option>${others.map(o => `<option value="${o.channel}" ${st.fallbacks[c.channel] === o.channel ? "selected" : ""}>${chLabel(o.channel)}</option>`).join("")}</select></div>` : ""}
+      </div>
+      ${chainHtml(c)}
+    </div>`;
+  }
+
+  function draw() {
+    sync();
+    if (jsonMode) {
+      host.innerHTML = `<div class="field"><label>Definition (JSON)</label>
+        <textarea id="wf-json" rows="16" spellcheck="false">${esc(JSON.stringify(wfDefinition(st), null, 2))}</textarea></div>
+        <button type="button" class="btn sm" id="wf-form">← Back to form</button>`;
+      host.querySelector("#wf-json").addEventListener("input", e => { hidden.value = e.target.value; });
+      host.querySelector("#wf-form").addEventListener("click", () => {
+        try { st = wfStateFromDefinition(JSON.parse(host.querySelector("#wf-json").value)); }
+        catch { toast("That JSON isn't valid yet", "err"); return; }
+        jsonMode = false; draw();
+      });
+      return;
+    }
+    const free = WF_CHANNELS.filter(ch => !st.channels.some(c => c.channel === ch));
+    host.innerHTML = `
+      <div class="muted" style="font-size:12px;margin-bottom:10px">Messages are templates: use <code>{{ recipient.external_ref }}</code> and any field from the event payload, e.g. <code>{{ plan }}</code>.</div>
+      ${st.channels.map(channelHtml).join("") || `<div class="chain-note" style="margin-bottom:10px">No channels yet — add the first one below.</div>`}
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+        ${free.length ? `<select id="wf-add-ch"><option value="">+ Add a channel…</option>${free.map(ch => `<option value="${ch}">${chLabel(ch)}</option>`).join("")}</select>` : `<span></span>`}
+        <button type="button" class="btn sm" id="wf-json-btn">Edit as JSON</button>
+      </div>`;
+
+    host.querySelector("#wf-add-ch")?.addEventListener("change", e => {
+      if (!e.target.value) return;
+      st.channels.push({ channel: e.target.value, subject: "", body: WF_DEFAULT_BODY[e.target.value] || "", format: e.target.value === "email" ? "markdown" : "text", fallbackOnly: false });
+      draw();
+    });
+    host.querySelector("#wf-json-btn").addEventListener("click", () => { jsonMode = true; draw(); });
+    host.querySelectorAll("[data-f]").forEach(el => el.addEventListener("input", () => { st.channels[+el.dataset.i][el.dataset.f] = el.value; sync(); }));
+    host.querySelectorAll("[data-fb]").forEach(el => el.addEventListener("change", () => {
+      const src = st.channels[+el.dataset.fb].channel;
+      if (el.value) st.fallbacks[src] = el.value; else delete st.fallbacks[src];
+      sync();
+    }));
+    host.querySelectorAll("[data-fbonly]").forEach(el => el.addEventListener("change", () => {
+      const c = st.channels[+el.dataset.fbonly]; c.fallbackOnly = el.checked;
+      if (c.fallbackOnly) delete st.fallbacks[c.channel];
+      draw();
+    }));
+    host.querySelectorAll("[data-del-ch]").forEach(el => el.addEventListener("click", () => {
+      const [gone] = st.channels.splice(+el.dataset.delCh, 1);
+      delete st.fallbacks[gone.channel]; delete st.chains[gone.channel];
+      for (const [src, dst] of Object.entries(st.fallbacks)) if (dst === gone.channel) delete st.fallbacks[src];
+      draw();
+    }));
+
+    host.querySelectorAll("[data-chain]").forEach(box => {
+      const ch = box.dataset.chain;
+      const ids = () => (st.chains[ch] ||= []);
+      box.querySelector("[data-add]")?.addEventListener("change", e => { if (e.target.value) { ids().push(e.target.value); draw(); } });
+      box.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => { ids().splice(+b.dataset.rm, 1); draw(); }));
+      const move = (i, j) => { const a = ids(); [a[i], a[j]] = [a[j], a[i]]; draw(); };
+      box.querySelectorAll("[data-up]").forEach(b => b.addEventListener("click", () => move(+b.dataset.up, +b.dataset.up - 1)));
+      box.querySelectorAll("[data-down]").forEach(b => b.addEventListener("click", () => move(+b.dataset.down, +b.dataset.down + 1)));
+      // Drag to reorder (the arrows above remain for keyboard users).
+      box.querySelectorAll(".chain-item").forEach(item => {
+        item.addEventListener("dragstart", e => { dragFrom = +item.dataset.idx; e.dataTransfer.effectAllowed = "move"; item.style.opacity = ".5"; });
+        item.addEventListener("dragend", () => { item.style.opacity = ""; });
+        item.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; });
+        item.addEventListener("drop", e => {
+          e.preventDefault();
+          const to = +item.dataset.idx;
+          if (dragFrom === null || dragFrom === to) return;
+          const a = ids(); const [m] = a.splice(dragFrom, 1); a.splice(to, 0, m);
+          dragFrom = null; draw();
+        });
+      });
+    });
+  }
+  draw();
+}
+
+async function openWorkflowModal(title, w, { submitLabel, onSubmit }) {
+  let saved = [];
+  try { saved = await api("/providers"); } catch { /* the editor degrades to no providers */ }
+  openModal(title, workflowForm(w || {}), { submitLabel, onSubmit, width: "760px" });
+  mountWorkflowEditor($("#modal-root"), saved, w?.definition || { channels: [{ channel: "in_app", subject: "", body: "", format: "text" }] });
 }
 
 function renderWorkflows(el) {
