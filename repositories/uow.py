@@ -13,6 +13,7 @@ from repositories.identity_repository import (
     PostgresTenantRepository,
     PostgresUserRepository,
 )
+from repositories.inbox_repository import PostgresInboxRepository
 from repositories.metrics_repository import PostgresMetricsRepository
 from repositories.notification_repository import PostgresNotificationRepository
 from repositories.operations_repository import PostgresOperationsRepository
@@ -47,6 +48,7 @@ class SqlAlchemyUnitOfWork:
         self.workflows = PostgresWorkflowRepository(self._session)
         self.recipients = PostgresRecipientRepository(self._session)
         self.outbox = PostgresOutboxRepository(self._session)
+        self.inbox = PostgresInboxRepository(self._session)
         self.device_tokens = PostgresDeviceTokenRepository(self._session)
         self.dead_letters = PostgresDeadLetterRepository(self._session)
         self.templates = PostgresTemplateRepository(self._session)

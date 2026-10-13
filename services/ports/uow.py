@@ -8,6 +8,7 @@ from services.ports.repositories import (
     DeliveryAttemptRepository,
     DeviceTokenRepository,
     EventRepository,
+    InboxRepository,
     MembershipRepository,
     MetricsRepository,
     NotificationRepository,
@@ -39,6 +40,7 @@ class UnitOfWork(Protocol):
     workflows: WorkflowRepository
     recipients: RecipientRepository
     outbox: OutboxRepository
+    inbox: InboxRepository
     device_tokens: DeviceTokenRepository
     dead_letters: DeadLetterRepository
     templates: TemplateRepository

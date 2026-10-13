@@ -9,6 +9,7 @@ from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
 from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
+from domain.entities.inbox import InboxMessage
 from domain.entities.notification import Notification
 from domain.entities.operations import OperationsSnapshot
 from domain.entities.outbox import OutboxEntry
@@ -24,6 +25,7 @@ from domain.value_objects.ids import (
     ApiKeyId,
     DeadLetterId,
     EventId,
+    InboxMessageId,
     MembershipId,
     NotificationId,
     OutboxEntryId,
@@ -367,3 +369,53 @@ class OperationsRepository(Protocol):
     async def snapshot(
         self, now: datetime, lost_before: datetime, in_doubt_before: datetime
     ) -> OperationsSnapshot: ...
+
+
+class InboxRepository(Protocol):
+    """Persistence port for the recipient in-app inbox. Every call is scoped to one recipient."""
+
+    async def add(self, message: InboxMessage) -> InboxMessage:
+        """Store the message; returns the existing one when this attempt already has one."""
+        ...
+
+    async def get(
+        self, tenant_id: TenantId, recipient_id: RecipientId, message_id: InboxMessageId
+    ) -> InboxMessage | None: ...
+
+    async def list(
+        self,
+        tenant_id: TenantId,
+        recipient_id: RecipientId,
+        *,
+        state: str = "active",
+        limit: int = 50,
+        before: tuple[datetime, InboxMessageId] | None = None,
+    ) -> list[InboxMessage]:
+        """Newest first. `state`: active (not archived), unread, read, archived, all."""
+        ...
+
+    async def unread_count(self, tenant_id: TenantId, recipient_id: RecipientId) -> int: ...
+
+    async def mark_read(
+        self,
+        tenant_id: TenantId,
+        recipient_id: RecipientId,
+        ids: Sequence[InboxMessageId] | None,
+        at: datetime,
+    ) -> list[InboxMessage]:
+        """Mark unread messages read (every active one when `ids` is None); returns those that changed."""
+        ...
+
+    async def mark_unread(
+        self, tenant_id: TenantId, recipient_id: RecipientId, message_id: InboxMessageId
+    ) -> bool: ...
+
+    async def set_archived(
+        self,
+        tenant_id: TenantId,
+        recipient_id: RecipientId,
+        message_id: InboxMessageId,
+        at: datetime | None,
+    ) -> bool: ...
+
+    async def prune(self, created_before: datetime, archived_before: datetime) -> int: ...

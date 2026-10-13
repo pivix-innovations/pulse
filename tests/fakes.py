@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
 from domain.entities.dead_letter import DeadLetter
@@ -12,6 +12,7 @@ from domain.entities.device import DeviceToken
 from domain.entities.event import Event
 from domain.entities.identity import ApiKey, Membership, Session, Tenant, User
 from domain.entities.notification import Notification
+from domain.entities.inbox import InboxMessage
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
 from domain.entities.provider import Provider
@@ -364,6 +365,87 @@ class InMemoryOutboxRepository:
     async def mark_published(self, entry_ids: Sequence[OutboxEntryId]) -> None:
         for entry_id in entry_ids:
             self.items[str(entry_id)].mark_published(datetime.now(timezone.utc))
+
+
+class InMemoryInboxRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, InboxMessage] = {}
+        self._seq = 0
+
+    @staticmethod
+    def _mine(m, tenant_id, recipient_id) -> bool:
+        return m.tenant_id == tenant_id and m.recipient_id == recipient_id
+
+    async def add(self, message: InboxMessage) -> InboxMessage:
+        for existing in self.items.values():
+            if existing.attempt_id == message.attempt_id:
+                return existing
+        self._seq += 1
+        # created_at is a server default in Postgres; keep ordering strict here.
+        message.created_at = message.created_at or (
+            datetime.now(timezone.utc) + timedelta(microseconds=self._seq)
+        )
+        self.items[str(message.id)] = message
+        return message
+
+    async def get(self, tenant_id, recipient_id, message_id):
+        m = self.items.get(str(message_id))
+        return m if m and self._mine(m, tenant_id, recipient_id) else None
+
+    async def list(self, tenant_id, recipient_id, *, state="active", limit=50, before=None):
+        out = [m for m in self.items.values() if self._mine(m, tenant_id, recipient_id)]
+        if state == "active":
+            out = [m for m in out if not m.is_archived]
+        elif state == "unread":
+            out = [m for m in out if not m.is_archived and not m.is_read]
+        elif state == "read":
+            out = [m for m in out if not m.is_archived and m.is_read]
+        elif state == "archived":
+            out = [m for m in out if m.is_archived]
+        out.sort(key=lambda m: (m.created_at, m.id.value), reverse=True)
+        if before is not None:
+            created, mid = before
+            out = [m for m in out if (m.created_at, m.id.value) < (created, mid.value)]
+        return out[:limit]
+
+    async def unread_count(self, tenant_id, recipient_id):
+        return len(await self.list(tenant_id, recipient_id, state="unread", limit=10**9))
+
+    async def mark_read(self, tenant_id, recipient_id, ids, at):
+        wanted = None if ids is None else {str(i) for i in ids}
+        changed = []
+        for m in self.items.values():
+            if not self._mine(m, tenant_id, recipient_id) or m.is_read:
+                continue
+            if wanted is None and m.is_archived:
+                continue
+            if wanted is None or str(m.id) in wanted:
+                m.read_at = at
+                changed.append(m)
+        return changed
+
+    async def mark_unread(self, tenant_id, recipient_id, message_id):
+        m = await self.get(tenant_id, recipient_id, message_id)
+        if m is None:
+            return False
+        m.read_at = None
+        return True
+
+    async def set_archived(self, tenant_id, recipient_id, message_id, at):
+        m = await self.get(tenant_id, recipient_id, message_id)
+        if m is None:
+            return False
+        m.archived_at = at
+        return True
+
+    async def prune(self, created_before, archived_before):
+        gone = [
+            k for k, m in self.items.items()
+            if m.created_at < created_before or (m.archived_at and m.archived_at < archived_before)
+        ]
+        for k in gone:
+            del self.items[k]
+        return len(gone)
 
 
 class InMemoryDeviceTokenRepository:
@@ -728,6 +810,7 @@ class InMemoryUnitOfWork:
         self.workflows = InMemoryWorkflowRepository()
         self.recipients = InMemoryRecipientRepository()
         self.outbox = InMemoryOutboxRepository()
+        self.inbox = InMemoryInboxRepository()
         self.device_tokens = InMemoryDeviceTokenRepository()
         self.dead_letters = InMemoryDeadLetterRepository()
         self.templates = InMemoryTemplateRepository()
