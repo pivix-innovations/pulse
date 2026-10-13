@@ -793,3 +793,40 @@ class FakePublisher:
         defer_by_seconds: float | None = None,
     ) -> None:
         self.published.append((topic, payload, job_id, defer_by_seconds))
+
+
+class FakeRateLimiter:
+    """In-memory token bucket + daily quota with a controllable clock (same contract as Redis)."""
+
+    def __init__(self) -> None:
+        self.now = 1_000_000.0
+        self.buckets: dict = {}
+        self.quota: dict = {}
+        self.fail = False
+
+    async def acquire(self, tenant_id, limits):
+        from services.ports.rate_limiter import Decision
+
+        if self.fail:
+            raise ConnectionError("redis down")
+        tokens, ts = self.buckets.get(tenant_id, (float(limits.burst), self.now))
+        tokens = min(limits.burst, tokens + max(0.0, self.now - ts) * limits.rate_per_second)
+        if tokens < 1:
+            self.buckets[tenant_id] = (tokens, self.now)
+            return Decision(False, "rate", (1 - tokens) / limits.rate_per_second, tokens)
+        tokens -= 1
+        self.buckets[tenant_id] = (tokens, self.now)
+        if limits.daily_quota is None:
+            return Decision(True, None, 0.0, tokens, None)
+        used = self.quota.get(tenant_id, 0) + 1
+        if used > limits.daily_quota:
+            return Decision(False, "quota", 3600.0, tokens, 0)
+        self.quota[tenant_id] = used
+        return Decision(True, None, 0.0, tokens, limits.daily_quota - used)
+
+    async def refund_quota(self, tenant_id) -> None:
+        if self.quota.get(tenant_id):
+            self.quota[tenant_id] -= 1
+
+    async def used_today(self, tenant_id) -> int:
+        return self.quota.get(tenant_id, 0)
