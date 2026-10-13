@@ -10,6 +10,7 @@ from config.retry import RetrySettings
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.provider_call import ProviderCall
+from telemetry.metrics import get_metrics
 from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId, WorkflowId
 from jobqueue.retry import compute_backoff
@@ -158,6 +159,9 @@ class DeliveryService:
                 await settle_notification(uow, tenant_id, attempt.notification_id)
             await uow.commit()
             await self._guard.complete(attempt.idempotency_key)
+            get_metrics().deliveries.add(
+                1, {"channel": attempt.channel.value, "outcome": "sent", "provider": provider.name}
+            )
             logger.info(
                 "Attempt %s sent via %s/%s (provider_message_id=%s)",
                 attempt_id,
@@ -174,6 +178,14 @@ class DeliveryService:
         calls: list[ProviderCall] = []
 
         def record(resolved: ResolvedProviderLike, started: float, outcome: str, error: str | None):
+            elapsed_ms = (time.monotonic() - started) * 1000
+            attrs = {
+                "provider": getattr(resolved.provider, "name", "unknown"),
+                "channel": attempt.channel.value,
+                "outcome": outcome,
+            }
+            get_metrics().provider_calls.add(1, attrs)
+            get_metrics().provider_duration.record(elapsed_ms, attrs)
             # Only saved providers have a health record; the env default doesn't.
             if resolved.provider_id is not None:
                 calls.append(
@@ -275,6 +287,9 @@ class DeliveryService:
 
         if retryable and attempt.attempt_count < self._retry.max_attempts:
             delay = compute_backoff(attempt.attempt_count, self._retry)
+            get_metrics().deliveries.add(
+                1, {"channel": attempt.channel.value, "outcome": "retrying", "provider": "n/a"}
+            )
             attempt.mark_retrying(datetime.now(timezone.utc) + timedelta(seconds=delay))
             await uow.delivery_attempts.update(attempt)
             await self._publisher.enqueue(
@@ -310,10 +325,17 @@ class DeliveryService:
                     reason=f"Retries exhausted ({attempt.attempt_count}): {error}",
                 )
             )
+            get_metrics().deliveries.add(
+                1, {"channel": attempt.channel.value, "outcome": "dead", "provider": "n/a"}
+            )
+            get_metrics().dead_letters.add(1, {"channel": attempt.channel.value})
             logger.warning("Attempt %s dead-lettered: %s", attempt.id, error)
         else:
             # Non-retryable: stays `failed`; the reconciliation sweep may
             # escalate it to the workflow's fallback channel.
+            get_metrics().deliveries.add(
+                1, {"channel": attempt.channel.value, "outcome": "failed", "provider": "n/a"}
+            )
             logger.info("Attempt %s failed (non-retryable): %s", attempt.id, error)
 
         await uow.delivery_attempts.update(attempt)

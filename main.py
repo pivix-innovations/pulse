@@ -1,3 +1,4 @@
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from services.rate_limit_service import RateLimitService
 from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
 from sse.registry import SseConnectionRegistry
+from telemetry.metrics import configure_metrics, get_metrics
 from telemetry.router import router as telemetry_router
 from workflows.registry import WorkflowRegistry
 
@@ -45,6 +47,9 @@ async def lifespan(app: FastAPI):
 
     # startup
     app.state.settings = settings
+    app.state.telemetry = configure_metrics(
+        settings.otel, service_name="pulse-api", version=settings.app.version
+    )
     app.state.database = Database(settings.database)
     await app.state.database.initialize()
 
@@ -75,6 +80,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # shutdown
+    if app.state.telemetry is not None:
+        app.state.telemetry.shutdown()
     await app.state.redis.aclose()
     await app.state.database.shutdown()
 
@@ -97,6 +104,23 @@ def create_app() -> FastAPI:
             status_code=409,
             content={"detail": "Resource conflicts with an existing record"},
         )
+
+    @app.middleware("http")
+    async def record_request_metrics(request: Request, call_next):
+        started = time.perf_counter()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route = request.scope.get("route")
+            # Route template, never the raw path: ids would explode cardinality.
+            path = getattr(route, "path", None) or "unmatched"
+            get_metrics().http_duration.record(
+                (time.perf_counter() - started) * 1000,
+                {"method": request.method, "route": path, "status_class": f"{status // 100}xx"},
+            )
 
     app.include_router(telemetry_router)
     app.include_router(auth_router, prefix="/api/v1")

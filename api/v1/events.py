@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from api.dependencies import get_notification_service, get_uow, require_scope
 from api.v1.schemas import EventAccepted, EventIn, EventOut
 from domain.value_objects.ids import TenantId
+from telemetry.metrics import get_metrics
 from services.ports.clients import SentinelUnavailable
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.notification_service import (
@@ -32,6 +33,7 @@ async def ingest_event(
         decision, limits = await limiter.check(tenant_id)
         if not decision.allowed:
             retry = max(1, math.ceil(decision.retry_after_seconds))
+            get_metrics().ratelimit_rejected.add(1, {"reason": decision.reason or "rate"})
             what = "daily event quota" if decision.reason == "quota" else "request rate limit"
             raise HTTPException(
                 status_code=429,
@@ -68,6 +70,7 @@ async def ingest_event(
         if limiter is not None:  # a rejected event shouldn't eat the tenant's quota
             await limiter.refund(tenant_id)
         raise HTTPException(status_code=422, detail=str(exc))
+    get_metrics().events_ingested.add(1, {"tenant": str(tenant_id)})
     return EventAccepted(notification_id=notification_id.value)
 
 
