@@ -13,6 +13,7 @@ from services.ports.repositories import (
     NotificationRepository,
     OutboxRepository,
     PreferenceRepository,
+    ProviderCallRepository,
     ProviderRepository,
     RecipientRepository,
     SessionRepository,
@@ -41,6 +42,7 @@ class UnitOfWork(Protocol):
     dead_letters: DeadLetterRepository
     templates: TemplateRepository
     providers: ProviderRepository
+    provider_calls: ProviderCallRepository
     metrics: MetricsRepository
     tenants: TenantRepository
     users: UserRepository

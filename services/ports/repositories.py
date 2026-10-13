@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, Sequence
 
@@ -12,6 +13,7 @@ from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
 from domain.entities.provider import Provider
+from domain.entities.provider_call import ProviderCall
 from domain.entities.recipient import Recipient
 from domain.entities.template import Template
 from domain.entities.workflow import Workflow
@@ -217,6 +219,35 @@ class ProviderRepository(Protocol):
     async def update(self, provider: Provider) -> None: ...
 
     async def delete(self, tenant_id: TenantId, provider_id: ProviderId) -> bool: ...
+
+
+@dataclass(slots=True)
+class ProviderCallStats:
+    """Aggregates over a window of calls to one saved provider."""
+
+    calls: int = 0  # excludes recipient errors
+    failures: int = 0
+    avg_latency_ms: float | None = None
+    p95_latency_ms: float | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    last_error: str | None = None
+    # Newest first: "ok" / "provider_error" for the latest few counted calls.
+    recent: list[str] = field(default_factory=list)
+
+
+class ProviderCallRepository(Protocol):
+    """Per-call outcome log feeding provider health."""
+
+    async def add_many(self, calls: Sequence[ProviderCall]) -> None: ...
+
+    async def stats(
+        self, tenant_id: TenantId, since: datetime
+    ) -> dict[ProviderId, ProviderCallStats]: ...
+
+    async def prune(self, before: datetime) -> int:
+        """Delete calls older than `before`; returns how many."""
+        ...
 
 
 class MetricsRepository(Protocol):

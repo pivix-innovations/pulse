@@ -17,6 +17,7 @@ from repositories.metrics_repository import PostgresMetricsRepository
 from repositories.notification_repository import PostgresNotificationRepository
 from repositories.outbox_repository import PostgresOutboxRepository
 from repositories.preference_repository import PostgresPreferenceRepository
+from repositories.provider_call_repository import PostgresProviderCallRepository
 from repositories.provider_repository import PostgresProviderRepository
 from repositories.recipient_repository import PostgresRecipientRepository
 from repositories.template_repository import PostgresTemplateRepository
@@ -49,6 +50,7 @@ class SqlAlchemyUnitOfWork:
         self.dead_letters = PostgresDeadLetterRepository(self._session)
         self.templates = PostgresTemplateRepository(self._session)
         self.providers = PostgresProviderRepository(self._session)
+        self.provider_calls = PostgresProviderCallRepository(self._session)
         self.metrics = PostgresMetricsRepository(self._session)
         self.tenants = PostgresTenantRepository(self._session)
         self.users = PostgresUserRepository(self._session)

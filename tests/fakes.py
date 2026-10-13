@@ -459,6 +459,48 @@ class InMemoryProviderRepository:
         return True
 
 
+class InMemoryProviderCallRepository:
+    def __init__(self) -> None:
+        self.items: list = []
+
+    async def add_many(self, calls) -> None:
+        now = datetime.now(timezone.utc)
+        for c in calls:
+            c.created_at = c.created_at or now
+            self.items.append(c)
+
+    async def stats(self, tenant_id, since):
+        from services.ports.repositories import ProviderCallStats
+
+        out: dict = {}
+        for c in sorted(self.items, key=lambda c: c.created_at):
+            if c.tenant_id != tenant_id or c.created_at < since:
+                continue
+            s = out.setdefault(c.provider_id, ProviderCallStats())
+            if c.outcome == "recipient_error":
+                continue
+            s.calls += 1
+            if c.outcome == "provider_error":
+                s.failures += 1
+                s.last_failure_at, s.last_error = c.created_at, c.error
+            else:
+                s.last_success_at = c.created_at
+            s.recent.insert(0, c.outcome)
+        for pid, s in out.items():
+            s.recent = s.recent[:5]
+            lat = sorted(c.latency_ms for c in self.items if c.provider_id == pid and c.outcome == "ok")
+            if lat:
+                s.avg_latency_ms = sum(lat) / len(lat)
+                s.p95_latency_ms = float(lat[min(len(lat) - 1, int(len(lat) * 0.95))])
+        return out
+
+    async def prune(self, before) -> int:
+        keep = [c for c in self.items if c.created_at >= before]
+        removed = len(self.items) - len(keep)
+        self.items = keep
+        return removed
+
+
 class InMemoryMetricsRepository:
     """Computes aggregates from the sibling in-memory repositories."""
 
@@ -644,6 +686,7 @@ class InMemoryUnitOfWork:
         self.dead_letters = InMemoryDeadLetterRepository()
         self.templates = InMemoryTemplateRepository()
         self.providers = InMemoryProviderRepository()
+        self.provider_calls = InMemoryProviderCallRepository()
         self.metrics = InMemoryMetricsRepository(self)
         self.tenants = InMemoryTenantRepository()
         self.users = InMemoryUserRepository()
