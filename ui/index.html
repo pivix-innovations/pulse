@@ -189,6 +189,29 @@
   tbody tr:hover { background: var(--surface-2); }
   .table-wrap { overflow-x: auto; }
 
+
+  .catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+  .catalog-card {
+    display: flex; flex-direction: column; gap: 8px; text-align: left; cursor: pointer;
+    padding: 14px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); color: inherit; font: inherit;
+  }
+  .catalog-card:hover { border-color: var(--accent); background: var(--surface-2); }
+  .catalog-card img, .provider-logo { width: 40px; height: 40px; border-radius: 10px; flex: none; }
+  .catalog-card .name { font-weight: 600; }
+  .catalog-card .desc { font-size: 12px; color: var(--muted, #667085); line-height: 1.4; }
+  .provider-card { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+  .provider-card:last-child { border-bottom: 0; }
+  .provider-card .grow { flex: 1; min-width: 0; }
+  .chain { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin-bottom: 12px; }
+  .chain-head { font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  .chain-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: var(--surface-2); }
+  .chain-item .rank { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; display: grid; place-items: center; flex: none; }
+  .chain-item .provider-logo { width: 24px; height: 24px; border-radius: 6px; }
+  .chain-item .grow { flex: 1; min-width: 0; }
+  .chain-note { font-size: 12px; color: var(--muted, #667085); margin-top: 6px; }
+  .secret-hint { font-size: 12px; color: var(--muted, #667085); margin-top: 4px; }
+
   .badge {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 2px 9px; border-radius: 999px;
@@ -1116,6 +1139,70 @@ const WORKFLOW_DEF_PLACEHOLDER = `{
   "fallbacks": {"in_app": "email"}
 }`;
 
+/* Per-channel provider chain: saved providers in priority order (first is tried first). */
+function chainEditorHtml() {
+  return `<div id="chain-editor"></div><input type="hidden" name="provider_chains" value="{}">`;
+}
+
+function mountChainEditor(root, saved, initial, channelsOf) {
+  const host = root.querySelector("#chain-editor");
+  const hidden = root.querySelector('input[name="provider_chains"]');
+  const textarea = root.querySelector('textarea[name="definition"]');
+  const chains = JSON.parse(JSON.stringify(initial || {}));
+  const byId = Object.fromEntries(saved.map(p => [p.id, p]));
+
+  const channels = () => {
+    try { return channelsOf(JSON.parse(textarea.value)); } catch { return Object.keys(chains); }
+  };
+  const draw = () => {
+    hidden.value = JSON.stringify(Object.fromEntries(Object.entries(chains).filter(([, v]) => v.length)));
+    const chs = channels();
+    host.innerHTML = `<div class="field"><label>Providers</label>
+      <div class="secret-hint" style="margin:-2px 0 8px">Pick saved providers for each channel. They're tried top to bottom; the next one is used only if the one above fails or times out.</div></div>` +
+      chs.map(ch => {
+        const ids = chains[ch] || [];
+        const options = saved.filter(p => p.channel === ch && p.is_active && !ids.includes(p.id));
+        return `<div class="chain" data-ch="${ch}">
+          <div class="chain-head"><span>${badge(chLabel(ch))}</span></div>
+          ${ids.map((id, i) => { const p = byId[id]; return `
+            <div class="chain-item">
+              <span class="rank">${i + 1}</span>
+              ${p ? logoImg(p) : ""}
+              <span class="grow">${p ? esc(p.label) : `<span class="muted">Unknown provider</span>`}</span>
+              <button type="button" class="btn sm" data-up="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move up">↑</button>
+              <button type="button" class="btn sm" data-down="${i}" ${i === ids.length - 1 ? "disabled" : ""} aria-label="Move down">↓</button>
+              <button type="button" class="btn sm danger" data-rm="${i}" aria-label="Remove">✕</button>
+            </div>`; }).join("")}
+          ${options.length ? `<select data-add><option value="">+ Add a provider…</option>${options.map(p => `<option value="${esc(p.id)}">${esc(p.label)} (${esc(p.catalog?.name || p.name)})</option>`).join("")}</select>` : ""}
+          ${!ids.length ? `<div class="chain-note">${options.length ? "No provider chosen — this channel uses your default." : `No saved ${chLabel(ch)} providers. Add one on the Providers page.`}</div>` : ""}
+        </div>`;
+      }).join("");
+    host.querySelectorAll(".chain").forEach(box => {
+      const ch = box.dataset.ch;
+      box.querySelector("[data-add]")?.addEventListener("change", e => {
+        if (e.target.value) { (chains[ch] ||= []).push(e.target.value); draw(); }
+      });
+      box.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => { chains[ch].splice(+b.dataset.rm, 1); draw(); }));
+      box.querySelectorAll("[data-up]").forEach(b => b.addEventListener("click", () => { const i = +b.dataset.up; [chains[ch][i - 1], chains[ch][i]] = [chains[ch][i], chains[ch][i - 1]]; draw(); }));
+      box.querySelectorAll("[data-down]").forEach(b => b.addEventListener("click", () => { const i = +b.dataset.down; [chains[ch][i + 1], chains[ch][i]] = [chains[ch][i], chains[ch][i + 1]]; draw(); }));
+    });
+  };
+  textarea.addEventListener("change", draw);
+  draw();
+}
+
+const workflowChannels = def => [...new Set([...(def.channels || []), ...(def.fallback_templates || [])].map(c => c.channel))];
+
+async function openWorkflowModal(title, w, { submitLabel, onSubmit }) {
+  let saved = [];
+  try { saved = await api("/providers"); } catch { /* chain editor degrades to empty */ }
+  const def = w?.definition ? { ...w.definition } : null;
+  const chains = def?.provider_chains || {};
+  if (def) delete def.provider_chains;   // edited via the chain editor, not the JSON box
+  openModal(title, workflowForm({ ...(w || {}), definition: def }) + chainEditorHtml(), { submitLabel, onSubmit });
+  mountChainEditor($("#modal-root"), saved, chains, workflowChannels);
+}
+
 function workflowForm(w = {}) {
   return `
     <div class="row">
@@ -1131,6 +1218,9 @@ function workflowFromForm(fd) {
   let definition;
   try { definition = JSON.parse(fd.get("definition")); }
   catch { throw new Error("Definition is not valid JSON"); }
+  const chains = JSON.parse(fd.get("provider_chains") || "{}");
+  if (Object.keys(chains).length) definition.provider_chains = chains;
+  else delete definition.provider_chains;
   return {
     name: fd.get("name"), event_type: fd.get("event_type"),
     definition, is_active: fd.get("is_active") === "on",
@@ -1173,7 +1263,7 @@ function renderWorkflows(el) {
 
       list.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => {
         const w = items.find(x => x.id === b.dataset.edit);
-        openModal("Edit workflow", workflowForm(w), {
+        openWorkflowModal("Edit workflow", w, {
           onSubmit: async fd => {
             await api(`/workflows/${w.id}`, { method: "PUT", body: JSON.stringify(workflowFromForm(fd)) });
             toast("Workflow updated", "ok"); load();
@@ -1189,7 +1279,7 @@ function renderWorkflows(el) {
   }
 
   $("#new-btn", el).addEventListener("click", () => {
-    openModal("New workflow", workflowForm(), {
+    openWorkflowModal("New workflow", null, {
       submitLabel: "Create",
       onSubmit: async fd => {
         await api("/workflows", { method: "POST", body: JSON.stringify(workflowFromForm(fd)) });
@@ -1202,67 +1292,134 @@ function renderWorkflows(el) {
 
 /* ═══ Providers ═══════════════════════════════════════════ */
 
-function providerForm(p = {}) {
+const CHANNELS = ["email", "push", "sms", "in_app"];
+
+function logoImg(p, cls = "provider-logo") {
+  const url = p.catalog?.logo_url || p.logo_url;
+  return url ? `<img class="${cls}" src="${esc(url)}" alt="">` : "";
+}
+
+function fieldInput(f, existing, isEdit) {
+  const name = (f.secret ? "secret__" : "config__") + f.key;
+  const req = f.required && !(f.secret && isEdit && existing.secrets_set?.includes(f.key)) ? "required" : "";
+  const value = f.secret ? "" : (existing.config?.[f.key] ?? f.default ?? "");
+  let input;
+  if (f.kind === "boolean") {
+    return `<label class="check"><input type="checkbox" name="${name}" ${value === true || value === "true" ? "checked" : ""}> ${esc(f.label)}</label>`;
+  } else if (f.kind === "textarea") {
+    input = `<textarea name="${name}" rows="6" spellcheck="false" autocomplete="off" ${req} placeholder="${f.secret && isEdit && existing.secrets_set?.includes(f.key) ? "••••••••  (saved — leave blank to keep)" : ""}"></textarea>`;
+  } else if (f.kind === "select") {
+    input = `<select name="${name}">${f.options.map(o => `<option ${o === value ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  } else {
+    input = `<input name="${name}" type="${f.secret ? "password" : f.kind === "number" ? "number" : "text"}" autocomplete="${f.secret ? "new-password" : "off"}"
+      value="${esc(value)}" ${req} placeholder="${f.secret && isEdit && existing.secrets_set?.includes(f.key) ? "••••••••  (saved — leave blank to keep)" : ""}">`;
+  }
+  return `<div class="field"><label>${esc(f.label)}${f.required ? " *" : ""}</label>${input}
+    ${f.help ? `<div class="secret-hint">${esc(f.help)}</div>` : ""}</div>`;
+}
+
+function providerConfigForm(spec, p = {}) {
+  const isEdit = !!p.id;
   return `
-    <div class="row">
-      <div class="field"><label>Channel</label>
-        <select name="channel">${["email", "push", "sms", "in_app"].map(c =>
-          `<option value="${c}" ${p.channel === c ? "selected" : ""}>${chLabel(c)}</option>`).join("")}</select></div>
-      <div class="field"><label>Name</label><input name="name" required value="${esc(p.name || "")}" placeholder="smtp"></div>
-      <div class="field"><label>Priority</label><input name="priority" type="number" value="${p.priority ?? 0}"></div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px">
+      <img class="provider-logo" src="${esc(spec.logo_url)}" alt="">
+      <div><div style="font-weight:600">${esc(spec.name)}</div><div class="muted">${esc(spec.description)}</div></div>
     </div>
-    <div class="field"><label>Config (JSON, non-secret)</label>
-      <textarea name="config" rows="6" spellcheck="false">${esc(JSON.stringify(p.config || {}, null, 2))}</textarea></div>
+    <div class="field"><label>Name</label>
+      <input name="label" required maxlength="200" value="${esc(p.label || spec.name)}" placeholder="e.g. Marketing email">
+      <div class="secret-hint">How you'll recognise this provider when adding it to workflows.</div></div>
+    ${spec.builtin ? `<div class="muted" style="margin-bottom:12px">No setup needed.</div>` : ""}
+    ${spec.fields.map(f => fieldInput(f, p, isEdit)).join("")}
     <label class="check"><input type="checkbox" name="is_active" ${p.is_active !== false ? "checked" : ""}> Active</label>`;
 }
 
-function providerFromForm(fd) {
-  let config;
-  try { config = JSON.parse(fd.get("config") || "{}"); }
-  catch { throw new Error("Config is not valid JSON"); }
+function providerFromConfigForm(fd, spec, existing = {}) {
+  const config = {}, secrets = {};
+  for (const f of spec.fields) {
+    const key = (f.secret ? "secret__" : "config__") + f.key;
+    if (f.kind === "boolean") { config[f.key] = fd.get(key) === "on"; continue; }
+    const v = fd.get(key);
+    if (f.secret) { if (v) secrets[f.key] = v; }       // blank = keep stored value
+    else if (v !== null && v !== "") config[f.key] = f.kind === "number" ? Number(v) : v;
+  }
   return {
-    channel: fd.get("channel"), name: fd.get("name"),
-    priority: parseInt(fd.get("priority"), 10) || 0,
-    config, is_active: fd.get("is_active") === "on",
+    channel: spec.channel, name: spec.key, label: fd.get("label"),
+    config, secrets, priority: existing.priority ?? 0,
+    is_active: fd.get("is_active") === "on",
   };
+}
+
+async function pickCatalogProvider() {
+  const catalog = await api("/provider-catalog");
+  return new Promise(resolve => {
+    const root = $("#modal-root");
+    let channel = "all";
+    const draw = () => {
+      const items = catalog.filter(c => channel === "all" || c.channel === channel);
+      root.innerHTML = `<div class="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" style="max-width:760px">
+        <div class="modal-head"><div class="modal-title">Choose a provider</div>
+          <button class="x-btn" data-close aria-label="Close">✕</button></div>
+        <div class="modal-body">
+          <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+            ${["all", ...CHANNELS].map(c => `<button type="button" class="btn sm ${c === channel ? "primary" : ""}" data-ch="${c}">${c === "all" ? "All" : chLabel(c)}</button>`).join("")}
+          </div>
+          <div class="catalog-grid">${items.map(c => `
+            <button type="button" class="catalog-card" data-pick="${esc(c.id)}">
+              <img src="${esc(c.logo_url)}" alt="">
+              <div class="name">${esc(c.name)}</div>
+              <div>${badge(chLabel(c.channel))}</div>
+              <div class="desc">${esc(c.description)}</div>
+            </button>`).join("")}</div>
+        </div></div></div>`;
+      root.querySelectorAll("[data-ch]").forEach(b => b.addEventListener("click", () => { channel = b.dataset.ch; draw(); }));
+      root.querySelectorAll("[data-pick]").forEach(b => b.addEventListener("click", () => {
+        root.innerHTML = ""; resolve(catalog.find(c => c.id === b.dataset.pick));
+      }));
+      root.querySelector("[data-close]").addEventListener("click", () => { root.innerHTML = ""; resolve(null); });
+      root.querySelector(".modal-backdrop").addEventListener("click", e => { if (e.target === e.currentTarget) { root.innerHTML = ""; resolve(null); } });
+    };
+    draw();
+  });
 }
 
 function renderProviders(el) {
   el.innerHTML = `
     <div class="card">
       <div class="card-head">
-        <div class="card-title">Providers</div>
-        <button class="btn primary" id="new-btn">+ New provider</button>
+        <div><div class="card-title">Providers</div>
+          <div class="card-sub">Configure a provider once, then add it to any workflow.</div></div>
+        <button class="btn primary" id="new-btn">+ Add provider</button>
       </div>
-      <div class="card-body flush table-wrap" id="list">${emptyState("Loading…", "")}</div>
+      <div class="card-body flush" id="list">${emptyState("Loading…", "")}</div>
     </div>`;
 
   async function load() {
     const list = $("#list", el);
     try {
-      const items = await api("/providers");
+      const [items, catalog] = await Promise.all([api("/providers"), api("/provider-catalog")]);
       if (items.length === 0) {
-        list.innerHTML = emptyState("No providers configured", "Register per-channel providers; credentials stay in the environment.");
+        list.innerHTML = emptyState("No providers yet", "Choose one from the catalog, enter its settings, then add it to a workflow.");
         return;
       }
-      list.innerHTML = `<table>
-        <thead><tr><th>Name</th><th>Channel</th><th>Priority</th><th>Status</th><th>Config</th><th></th></tr></thead>
-        <tbody>${items.map(p => `<tr>
-          <td style="font-weight:550">${esc(p.name)}<div class="muted" style="font-weight:400">${shortId(p.id)}</div></td>
-          <td>${badge(chLabel(p.channel))}</td>
-          <td>${p.priority}</td>
-          <td>${boolBadge(p.is_active)}</td>
-          <td class="mono muted" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(JSON.stringify(p.config))}</td>
-          <td style="text-align:right;white-space:nowrap">
-            <button class="btn sm" data-edit="${esc(p.id)}">Edit</button>
-            <button class="btn sm danger" data-del="${esc(p.id)}">Delete</button>
-          </td></tr>`).join("")}</tbody></table>`;
+      list.innerHTML = items.map(p => `
+        <div class="provider-card">
+          ${logoImg(p)}
+          <div class="grow">
+            <div style="font-weight:600">${esc(p.label)} ${badge(chLabel(p.channel))} ${boolBadge(p.is_active)}</div>
+            <div class="muted">${esc(p.catalog?.name || p.name)}
+              ${p.used_by.length ? ` · used by ${p.used_by.map(u => esc(u.name)).filter((v, i, a) => a.indexOf(v) === i).join(", ")}` : " · not used by any workflow yet"}</div>
+          </div>
+          <button class="btn sm" data-edit="${esc(p.id)}">Edit</button>
+          <button class="btn sm danger" data-del="${esc(p.id)}">Delete</button>
+        </div>`).join("");
 
       list.querySelectorAll("[data-edit]").forEach(b => b.addEventListener("click", () => {
         const p = items.find(x => x.id === b.dataset.edit);
-        openModal("Edit provider", providerForm(p), {
+        const spec = catalog.find(c => c.channel === p.channel && c.key === p.name);
+        if (!spec) { toast(`'${p.name}' is no longer in the catalog`, "err"); return; }
+        openModal("Edit provider", providerConfigForm(spec, p), {
           onSubmit: async fd => {
-            await api(`/providers/${p.id}`, { method: "PUT", body: JSON.stringify(providerFromForm(fd)) });
+            await api(`/providers/${p.id}`, { method: "PUT", body: JSON.stringify(providerFromConfigForm(fd, spec, p)) });
             toast("Provider updated", "ok"); load();
           },
         });
@@ -1275,12 +1432,15 @@ function renderProviders(el) {
     } catch (err) { list.innerHTML = emptyState("Couldn't load providers", err.message); }
   }
 
-  $("#new-btn", el).addEventListener("click", () => {
-    openModal("New provider", providerForm(), {
-      submitLabel: "Create",
+  $("#new-btn", el).addEventListener("click", async () => {
+    let spec;
+    try { spec = await pickCatalogProvider(); } catch (err) { toast(err.message, "err"); return; }
+    if (!spec) return;
+    openModal(`Set up ${spec.name}`, providerConfigForm(spec), {
+      submitLabel: "Save provider",
       onSubmit: async fd => {
-        await api("/providers", { method: "POST", body: JSON.stringify(providerFromForm(fd)) });
-        toast("Provider created", "ok"); load();
+        await api("/providers", { method: "POST", body: JSON.stringify(providerFromConfigForm(fd, spec)) });
+        toast("Provider saved", "ok"); load();
       },
     });
   });
