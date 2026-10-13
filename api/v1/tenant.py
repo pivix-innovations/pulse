@@ -5,10 +5,10 @@ import secrets
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_identity_service, get_uow, require_tenant_admin
+from api.dependencies import get_identity_service, get_uow, require_tenant, require_tenant_admin
 from domain.entities.identity import Membership, User
 from domain.enums.identity import TenantRole
 from domain.value_objects.ids import ApiKeyId, MembershipId, TenantId, UserId
@@ -18,6 +18,33 @@ from services.identity_service import IdentityService, hash_password
 router = APIRouter(prefix="/tenant", tags=["tenant"])
 
 _EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+# ── Usage ─────────────────────────────────────────────────────────────
+
+class UsageOut(BaseModel):
+    rate_limit_per_second: float | None
+    rate_burst: int | None
+    daily_quota: int | None            # None = unlimited
+    used_today: int
+    quota_remaining: int | None
+    enforced: bool
+
+
+@router.get("/usage", response_model=UsageOut)
+async def usage(request: Request, tenant_id: TenantId = Depends(require_tenant)) -> UsageOut:
+    """Event ingress limits in force for this tenant and today's usage (UTC day)."""
+    service = getattr(request.app.state, "rate_limit_service", None)
+    if service is None or not service.enabled:
+        return UsageOut(rate_limit_per_second=None, rate_burst=None, daily_quota=None,
+                        used_today=0, quota_remaining=None, enforced=False)
+    limits, used = await service.usage(tenant_id)
+    return UsageOut(
+        rate_limit_per_second=limits.rate_per_second, rate_burst=limits.burst,
+        daily_quota=limits.daily_quota, used_today=used,
+        quota_remaining=None if limits.daily_quota is None else max(0, limits.daily_quota - used),
+        enforced=True,
+    )
 
 
 # ── Members ───────────────────────────────────────────────────────────

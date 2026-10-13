@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from redis.asyncio import Redis
 
 from jobqueue.circuit_breaker import RedisCircuitBreaker
+from jobqueue.rate_limiter import RedisRateLimiter
 from sqlalchemy.exc import IntegrityError
 
 from api.v1.admin import router as admin_router
@@ -30,6 +31,7 @@ from database.database import Database
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.identity_service import IdentityService
 from services.metrics_service import MetricsService
+from services.rate_limit_service import RateLimitService
 from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
 from sse.registry import SseConnectionRegistry
@@ -63,6 +65,9 @@ async def lifespan(app: FastAPI):
         sentinel=DatabaseRecipientClient(uow_factory),
         registry=WorkflowRegistry(),
         rendering=RenderingService(),
+    )
+    app.state.rate_limit_service = RateLimitService(
+        RedisRateLimiter(app.state.redis), uow_factory, settings.rate_limit
     )
     app.state.metrics_service = MetricsService(uow_factory)
     app.state.identity_service = IdentityService(uow_factory)

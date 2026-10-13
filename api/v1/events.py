@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+import math
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from api.dependencies import get_notification_service, get_uow, require_tenant
 from api.v1.schemas import EventAccepted, EventIn, EventOut
@@ -19,9 +21,27 @@ router = APIRouter(prefix="/events", tags=["events"])
 @router.post("", response_model=EventAccepted, status_code=202)
 async def ingest_event(
     body: EventIn,
+    request: Request,
+    response: Response,
     tenant_id: TenantId = Depends(require_tenant),
     service: NotificationService = Depends(get_notification_service),
 ) -> EventAccepted:
+    limiter = getattr(request.app.state, "rate_limit_service", None)
+    if limiter is not None:
+        decision, limits = await limiter.check(tenant_id)
+        if not decision.allowed:
+            retry = max(1, math.ceil(decision.retry_after_seconds))
+            what = "daily event quota" if decision.reason == "quota" else "request rate limit"
+            raise HTTPException(
+                status_code=429,
+                detail=f"Your {what} has been reached; retry in {retry}s",
+                headers={"Retry-After": str(retry), "X-RateLimit-Reason": decision.reason or "rate"},
+            )
+        if limits is not None:
+            response.headers["X-RateLimit-Limit"] = f"{limits.rate_per_second:g}/s burst {limits.burst}"
+            response.headers["X-RateLimit-Remaining"] = str(int(decision.tokens_remaining))
+            if decision.quota_remaining is not None:
+                response.headers["X-Quota-Remaining"] = str(decision.quota_remaining)
     try:
         notification_id = await service.process_event(
             tenant_id,
@@ -34,9 +54,9 @@ async def ingest_event(
                 scheduled_at=body.scheduled_at,
             ),
         )
-    except UnknownEventType as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    except NoRecipientsResolved as exc:
+    except (UnknownEventType, NoRecipientsResolved) as exc:
+        if limiter is not None:  # a rejected event shouldn't eat the tenant's quota
+            await limiter.refund(tenant_id)
         raise HTTPException(status_code=422, detail=str(exc))
     return EventAccepted(notification_id=notification_id.value)
 
