@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from config.retry import RetrySettings
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
+from domain.entities.provider_call import ProviderCall
 from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, TenantId, WorkflowId
 from jobqueue.retry import compute_backoff
@@ -45,10 +47,18 @@ class ProviderResolver(Protocol):
 class ChainFailed(Exception):
     """Every provider in the chain failed (or one stopped the chain)."""
 
-    def __init__(self, message: str, *, retryable: bool, invalid: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool,
+        invalid: tuple[str, ...],
+        calls: list[ProviderCall],
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
         self.invalid_destinations = invalid
+        self.calls = calls
 
 
 class DeliveryService:
@@ -112,8 +122,11 @@ class DeliveryService:
             await uow.delivery_attempts.update(attempt)
             await uow.commit()
             try:
-                used, result, failed_over = await self._send_through_chain(chain, message)
+                used, result, failed_over, calls = await self._send_through_chain(
+                    attempt, chain, message
+                )
             except ChainFailed as exc:
+                await uow.provider_calls.add_many(exc.calls)
                 await self._guard.release(attempt.idempotency_key)
                 if exc.invalid_destinations:
                     await self._prune_destinations(uow, attempt, exc.invalid_destinations)
@@ -122,6 +135,7 @@ class DeliveryService:
                 )
                 await uow.commit()
                 return attempt.status.value
+            await uow.provider_calls.add_many(calls)
             if result.invalid_destinations:
                 await self._prune_destinations(uow, attempt, result.invalid_destinations)
             provider, provider_id = used.provider, used.provider_id
@@ -151,17 +165,36 @@ class DeliveryService:
             return "sent"
 
     async def _send_through_chain(
-        self, chain: list[ResolvedProviderLike], message: OutboundMessage
-    ) -> tuple[ResolvedProviderLike, SendResult, list[str]]:
+        self, attempt: DeliveryAttempt, chain: list[ResolvedProviderLike], message: OutboundMessage
+    ) -> tuple[ResolvedProviderLike, SendResult, list[str], list[ProviderCall]]:
         failures: list[str] = []
+        calls: list[ProviderCall] = []
+
+        def record(resolved: ResolvedProviderLike, started: float, outcome: str, error: str | None):
+            # Only saved providers have a health record; the env default doesn't.
+            if resolved.provider_id is not None:
+                calls.append(
+                    ProviderCall(
+                        tenant_id=attempt.tenant_id,
+                        provider_id=resolved.provider_id,
+                        attempt_id=attempt.id,
+                        channel=attempt.channel,
+                        outcome=outcome,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        error=error,
+                    )
+                )
+
         retryable = False
         invalid: list[str] = []
         for position, resolved in enumerate(chain):
+            started = time.monotonic()
             try:
                 result = await asyncio.wait_for(
                     resolved.provider.send(message), self._retry.provider_timeout_seconds
                 )
-                return resolved, result, failures
+                record(resolved, started, "ok", None)
+                return resolved, result, failures, calls
             except (asyncio.TimeoutError, TimeoutError):
                 error = f"timed out after {self._retry.provider_timeout_seconds:g}s"
                 exc_retryable, failover = True, True
@@ -170,6 +203,7 @@ class DeliveryService:
                 exc_retryable = getattr(exc, "retryable", True)
                 failover = exc.failover if isinstance(exc, ProviderSendError) else True
                 invalid.extend(getattr(exc, "invalid_destinations", ()))
+            record(resolved, started, "provider_error" if failover else "recipient_error", error[:500])
             failures.append(f"{resolved.label}: {error}")
             retryable = retryable or exc_retryable
             if not failover:
@@ -181,7 +215,9 @@ class DeliveryService:
                     error,
                     chain[position + 1].label,
                 )
-        raise ChainFailed("; ".join(failures), retryable=retryable, invalid=tuple(invalid))
+        raise ChainFailed(
+            "; ".join(failures), retryable=retryable, invalid=tuple(invalid), calls=calls
+        )
 
     async def _prune_destinations(
         self, uow: UnitOfWork, attempt: DeliveryAttempt, destinations: tuple[str, ...]
