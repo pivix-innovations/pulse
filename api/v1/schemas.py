@@ -33,6 +33,11 @@ class DeliveryAttemptOut(BaseModel):
     last_error: str | None
     sent_at: datetime | None
     delivered_at: datetime | None
+    # Which saved provider carried it (None: the env default), the provider's
+    # own id for the message, and whether a delivery receipt is still awaited.
+    provider_id: uuid.UUID | None = None
+    provider_message_id: str | None = None
+    awaiting_confirmation: bool = False
 
 
 class NotificationOut(BaseModel):
