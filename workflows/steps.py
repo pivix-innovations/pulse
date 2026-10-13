@@ -21,8 +21,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from domain.enums import ChannelType, TemplateFormat
-from workflows.channel_template import ChannelTemplate
+from domain.enums import ChannelType
+from workflows.channel_template import ChannelTemplate, decode_channel_template
 
 MAX_STEPS = 10
 MAX_DELAY_SECONDS = 30 * 24 * 3600
@@ -131,13 +131,7 @@ def parse_steps(raw: list[Any]) -> tuple[Step, ...]:
         if not isinstance(sid, str) or not _ID.match(sid):
             raise InvalidSteps(f"step id {sid!r} must be lowercase letters, digits, '-' or '_' (max 40)")
         try:
-            channel = ChannelType(item["channel"])
-            template = ChannelTemplate(
-                channel=channel,
-                subject=item.get("subject"),
-                body=item["body"],
-                format=TemplateFormat(item.get("format", "markdown")),
-            )
+            template = decode_channel_template(item)
         except KeyError as exc:
             raise InvalidSteps(f"step '{sid}' is missing {exc.args[0]!r}") from exc
         except ValueError as exc:
@@ -175,14 +169,12 @@ def validate_steps(steps: list[Step] | tuple[Step, ...]) -> None:
 def encode_steps(steps: tuple[Step, ...]) -> list[dict[str, Any]]:
     out = []
     for s in steps:
-        item: dict[str, Any] = {
-            "id": s.id,
-            "channel": s.template.channel.value,
-            "subject": s.template.subject,
-            "body": s.template.body,
-            "format": s.template.format.value,
-            "delay_seconds": s.delay_seconds,
-        }
+        item: dict[str, Any] = {"id": s.id, "channel": s.template.channel.value}
+        if s.template.template:
+            item["template"] = s.template.template
+        else:
+            item.update(subject=s.template.subject, body=s.template.body, format=s.template.format.value)
+        item["delay_seconds"] = s.delay_seconds
         if s.when is not None:
             when: dict[str, Any] = {}
             if s.when.step:

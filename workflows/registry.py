@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from domain.enums import ChannelType, TemplateFormat
-from workflows.channel_template import ChannelTemplate
+from workflows.channel_template import ChannelTemplate, decode_channel_template
 from workflows.digest import DigestConfig, parse_digest
 from workflows.steps import Step, encode_steps, parse_steps
 
@@ -46,6 +46,8 @@ class WorkflowDefinition:
         """Serializable form persisted on the workflow DB row."""
 
         def encode(ct: ChannelTemplate) -> dict[str, Any]:
+            if ct.template:
+                return {"channel": ct.channel.value, "template": ct.template}
             return {
                 "channel": ct.channel.value,
                 "subject": ct.subject,
@@ -68,13 +70,7 @@ class WorkflowDefinition:
     def from_dict(cls, name: str, event_type: str, raw: dict[str, Any]) -> "WorkflowDefinition":
         """Rebuild from a workflow DB row's definition JSON (sweep uses this)."""
 
-        def decode(item: dict[str, Any]) -> ChannelTemplate:
-            return ChannelTemplate(
-                channel=ChannelType(item["channel"]),
-                subject=item.get("subject"),
-                body=item["body"],
-                format=TemplateFormat(item.get("format", "markdown")),
-            )
+        decode = decode_channel_template
 
         return cls(
             name=name,
