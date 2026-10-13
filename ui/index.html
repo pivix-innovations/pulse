@@ -1513,11 +1513,13 @@ function receiptsHtml(p) {
   const url = p.webhook_url || (location.origin + p.webhook_path);
   const auto = p.name === "twilio";                       // Pulse hands Twilio its callback itself
   const keyField = { resend: "webhook_secret", sendgrid: "webhook_public_key" }[p.name];
-  const on = auto ? !!p.webhook_url : p.secrets_set.includes(keyField);
+  const on = auto ? !!p.webhook_url : p.name === "ses" ? !!p.config.sns_topic_arn : p.secrets_set.includes(keyField);
   const hint = auto
     ? (p.webhook_url ? "Pulse registers this callback with Twilio on every message."
                      : "Set PULSE_API__PUBLIC_URL so Twilio can report delivery back to Pulse.")
-    : `Add this URL in ${esc(p.catalog?.name || p.name)}'s webhook settings, then paste the signing key via Edit.`;
+    : p.name === "ses"
+      ? "Subscribe this URL (HTTPS) to your SNS topic and enter the topic ARN via Edit; Pulse confirms the subscription itself."
+      : `Add this URL in ${esc(p.catalog?.name || p.name)}'s webhook settings, then paste the signing key via Edit.`;
   return `<div class="muted" style="margin-top:6px;font-size:12px">
       ${on ? "✓ Delivery receipts on" : "○ Delivery confirmation off — messages stay “sent”"} · ${hint}
       <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
