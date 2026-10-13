@@ -79,6 +79,11 @@ class DeviceTokenId(_Id):
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateVersionId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class DigestBatchId(_Id):
     pass
 

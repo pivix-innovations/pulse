@@ -19,7 +19,7 @@ from domain.entities.provider import Provider
 from domain.entities.provider_call import ProviderCall
 from domain.entities.recipient import Recipient
 from domain.entities.step_run import StepRun
-from domain.entities.template import Template
+from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import (
@@ -194,7 +194,31 @@ class TemplateRepository(Protocol):
 
     async def update(self, template: Template) -> None: ...
 
-    async def delete(self, tenant_id: TenantId, template_id: TemplateId) -> bool: ...
+    async def delete(self, tenant_id: TenantId, template_id: TemplateId) -> bool:
+        """Removes the template and its versions."""
+        ...
+
+    async def find(self, tenant_id: TenantId, name: str, channel: ChannelType) -> list[Template]:
+        """Every locale of the template with this name and channel."""
+        ...
+
+    async def add_version(self, version: TemplateVersion) -> TemplateVersion:
+        """Append the next version number (the caller's value is replaced); returns the stored version."""
+        ...
+
+    async def get_version(
+        self, tenant_id: TenantId, template_id: TemplateId, version: int
+    ) -> TemplateVersion | None: ...
+
+    async def list_versions(self, tenant_id: TenantId, template_id: TemplateId) -> list[TemplateVersion]:
+        """Newest first."""
+        ...
+
+    async def list_published(self, tenant_id: TenantId) -> dict[TemplateId, TemplateVersion]:
+        """The published version of every template that has one."""
+        ...
+
+    async def set_published(self, tenant_id: TenantId, template_id: TemplateId, version: int) -> None: ...
 
 
 class ProviderRepository(Protocol):

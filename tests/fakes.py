@@ -19,7 +19,7 @@ from domain.entities.outbox import OutboxEntry
 from domain.entities.preference import Preference
 from domain.entities.provider import Provider
 from domain.entities.recipient import Recipient
-from domain.entities.template import Template
+from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus, OutboxStatus
 from domain.value_objects.ids import (
@@ -608,6 +608,7 @@ class InMemoryDeadLetterRepository:
 class InMemoryTemplateRepository:
     def __init__(self) -> None:
         self.items: dict[str, Template] = {}
+        self.versions: list[TemplateVersion] = []
 
     async def add(self, template: Template) -> None:
         self.items[str(template.id)] = template
@@ -627,7 +628,48 @@ class InMemoryTemplateRepository:
         if t is None or t.tenant_id != tenant_id:
             return False
         del self.items[str(template_id)]
+        self.versions = [v for v in self.versions if v.template_id != template_id]
         return True
+
+    async def find(self, tenant_id, name, channel):
+        return [t for t in self.items.values() if t.tenant_id == tenant_id and t.name == name and t.channel is channel]
+
+    async def add_version(self, version):
+        mine = [v.version for v in self.versions if v.template_id == version.template_id]
+        stored = TemplateVersion(
+            id=version.id, tenant_id=version.tenant_id, template_id=version.template_id,
+            version=max(mine, default=0) + 1, subject=version.subject, body=version.body,
+            format=version.format, note=version.note,
+            created_at=datetime.now(timezone.utc) + timedelta(microseconds=len(self.versions)),
+        )
+        self.versions.append(stored)
+        return stored
+
+    async def get_version(self, tenant_id, template_id, version):
+        return next(
+            (v for v in self.versions
+             if v.tenant_id == tenant_id and v.template_id == template_id and v.version == version),
+            None,
+        )
+
+    async def list_versions(self, tenant_id, template_id):
+        mine = [v for v in self.versions if v.tenant_id == tenant_id and v.template_id == template_id]
+        return sorted(mine, key=lambda v: v.version, reverse=True)
+
+    async def list_published(self, tenant_id):
+        out = {}
+        for t in self.items.values():
+            if t.tenant_id == tenant_id and t.published_version is not None:
+                v = await self.get_version(tenant_id, t.id, t.published_version)
+                if v:
+                    out[t.id] = v
+        return out
+
+    async def set_published(self, tenant_id, template_id, version):
+        t = self.items.get(str(template_id))
+        if t is None or t.tenant_id != tenant_id:
+            raise LookupError("template not found")
+        t.published_version = version
 
 
 class InMemoryProviderRepository:
