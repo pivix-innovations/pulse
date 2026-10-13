@@ -155,6 +155,38 @@ class Stack:
         finally:
             await database.shutdown()
 
+    def admin_client(self) -> httpx.Client:
+        """A console session (tenant admin) on the real API, the way key management is done."""
+        asyncio.run(self._add_admin())
+        client = httpx.Client(
+            base_url=f"http://127.0.0.1:{self.port}/api/v1", timeout=15,
+            headers={"X-Tenant-Id": self.tenant_id},
+        )
+        r = client.post("/auth/login", json={"email": "admin@e2e.test", "password": "e2e-admin-password"})
+        assert r.status_code == 200, r.text
+        return client
+
+    async def _add_admin(self) -> None:
+        from domain.entities.identity import Membership, User
+        from domain.enums.identity import TenantRole
+        from domain.value_objects.ids import MembershipId, TenantId, UserId
+        from services.identity_service import hash_password
+
+        database = Database(self.settings.database.model_copy(update={"db": self.db_name}))
+        await database.initialize()
+        try:
+            async with SqlAlchemyUnitOfWork(database.session_factory) as uow:
+                if await uow.users.get_by_email("admin@e2e.test") is None:
+                    user = User(id=UserId.new(), email="admin@e2e.test", password_hash=hash_password("e2e-admin-password"))
+                    await uow.users.add(user)
+                    await uow.commit()                 # the membership's foreign key needs the user row first
+                    await uow.memberships.upsert(Membership(
+                        id=MembershipId.new(), tenant_id=TenantId.from_str(self.tenant_id),
+                        user_id=user.id, role=TenantRole.ADMIN))
+                    await uow.commit()
+        finally:
+            await database.shutdown()
+
     def add_tenant(self, name: str) -> tuple[str, str]:
         """Another tenant with its own API key, for isolation tests. Returns (api_key, tenant_id)."""
         return asyncio.run(self._add_tenant(name))
