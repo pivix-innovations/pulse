@@ -5,6 +5,7 @@ from typing import Any
 
 from domain.enums import ChannelType, TemplateFormat
 from workflows.channel_template import ChannelTemplate
+from workflows.digest import DigestConfig, parse_digest
 from workflows.steps import Step, encode_steps, parse_steps
 
 __all__ = ["ChannelTemplate", "WorkflowDefinition", "WorkflowRegistry"]
@@ -25,6 +26,8 @@ class WorkflowDefinition:
     # When present the workflow is a sequence: steps replace `channels` and
     # `fallbacks` (each step decides what happens next).
     steps: tuple[Step, ...] = ()
+    # When present, events are buffered per recipient and sent as one digest.
+    digest: DigestConfig | None = None
 
     @property
     def is_sequence(self) -> bool:
@@ -57,6 +60,8 @@ class WorkflowDefinition:
         }
         if self.steps:
             out["steps"] = encode_steps(self.steps)
+        if self.digest:
+            out["digest"] = self.digest.as_dict()
         return out
 
     @classmethod
@@ -78,6 +83,7 @@ class WorkflowDefinition:
             fallbacks=dict(raw.get("fallbacks", {})),
             fallback_templates=tuple(decode(i) for i in raw.get("fallback_templates", [])),
             steps=parse_steps(raw["steps"]) if raw.get("steps") else (),
+            digest=parse_digest(raw["digest"]) if raw.get("digest") is not None else None,
         )
 
 

@@ -48,6 +48,8 @@ def _validate_definition(body: WorkflowIn) -> None:
         parsed = WorkflowDefinition.from_dict(body.name, body.event_type, body.definition)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid workflow definition: {exc}")
+    if parsed.digest is not None and parsed.is_sequence:
+        raise HTTPException(status_code=422, detail="A workflow can be a digest or a sequence, not both")
     if parsed.is_sequence:
         if parsed.channels or parsed.fallbacks or parsed.fallback_templates:
             raise HTTPException(
