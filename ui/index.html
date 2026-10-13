@@ -654,7 +654,32 @@ function renderOverview(el) {
       </select>
       <button class="btn" id="refresh">Refresh</button>
     </div>
+    <div id="usage-area"></div>
     <div id="metrics-area"><div class="empty muted">Loading metrics…</div></div>`;
+
+  async function loadUsage() {
+    const area = $("#usage-area", el);
+    try {
+      const u = await api("/tenant/usage");
+      if (!u.enforced) { area.innerHTML = ""; return; }
+      const pct = u.daily_quota ? Math.min(100, Math.round(u.used_today / u.daily_quota * 100)) : null;
+      area.innerHTML = `<div class="card" style="margin-bottom:18px"><div class="card-head"><div>
+          <div class="card-title">Event limits</div>
+          <div class="card-sub">What this tenant may send to <code>POST /events</code></div></div></div>
+        <div class="card-body" style="display:flex;gap:32px;flex-wrap:wrap;align-items:center">
+          <div><div class="muted" style="font-size:12px">Sustained rate</div><div style="font-weight:600">${u.rate_limit_per_second}/s</div></div>
+          <div><div class="muted" style="font-size:12px">Burst</div><div style="font-weight:600">${u.rate_burst}</div></div>
+          <div style="flex:1;min-width:220px">
+            <div class="muted" style="font-size:12px">Today (UTC)</div>
+            ${u.daily_quota === null
+              ? `<div style="font-weight:600">${u.used_today.toLocaleString()} events · no daily quota</div>`
+              : `<div style="font-weight:600">${u.used_today.toLocaleString()} of ${u.daily_quota.toLocaleString()} events</div>
+                 <div style="height:6px;border-radius:3px;background:var(--surface-2);margin-top:6px;overflow:hidden">
+                   <div style="height:100%;width:${pct}%;background:${pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--accent)"}"></div></div>`}
+          </div></div></div>`;
+    } catch { area.innerHTML = ""; }
+  }
+  loadUsage();
 
   async function load() {
     const area = $("#metrics-area", el);
@@ -709,7 +734,7 @@ function renderOverview(el) {
       area.innerHTML = emptyState("Couldn't load metrics", err.message);
     }
   }
-  $("#refresh", el).addEventListener("click", load);
+  $("#refresh", el).addEventListener("click", () => { load(); loadUsage(); });
   $("#window", el).addEventListener("change", load);
   load();
   const timer = setInterval(load, 30000);
@@ -1874,6 +1899,14 @@ function renderApiKeys(el) {
 
 /* ═══ Tenants (platform admin) ════════════════════════════ */
 
+function limitsSummary(t) {
+  const parts = [];
+  if (t.rate_limit_per_second != null) parts.push(`${t.rate_limit_per_second}/s`);
+  if (t.rate_burst != null) parts.push(`burst ${t.rate_burst}`);
+  if (t.daily_quota != null) parts.push(`${t.daily_quota.toLocaleString()}/day`);
+  return parts.length ? esc(parts.join(" · ")) : "platform default";
+}
+
 function renderTenants(el) {
   el.innerHTML = `
     <div class="card">
@@ -1891,19 +1924,43 @@ function renderTenants(el) {
       list.innerHTML = items.length === 0
         ? emptyState("No tenants yet", "Create the first customer organization.")
         : `<table>
-        <thead><tr><th>Name</th><th>Slug</th><th>Tenant ID</th><th>Status</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Slug</th><th>Tenant ID</th><th>Status</th><th>Event limits</th><th>Created</th><th></th></tr></thead>
         <tbody>${items.map(t => `<tr>
           <td style="font-weight:550">${esc(t.name)}</td>
           <td class="mono">${esc(t.slug)}</td>
           <td>${shortId(t.id)}</td>
           <td>${boolBadge(t.is_active)}</td>
+          <td class="muted" style="font-size:12px">${limitsSummary(t)}</td>
           <td class="muted">${esc(fmtDate(t.created_at))}</td>
           <td style="text-align:right;white-space:nowrap">
+            <button class="btn sm" data-limits="${esc(t.id)}">Limits</button>
             <button class="btn sm" data-rename="${esc(t.id)}">Rename</button>
             <button class="btn sm ${t.is_active ? "danger" : ""}" data-toggle="${esc(t.id)}" data-active="${t.is_active}">
               ${t.is_active ? "Deactivate" : "Activate"}</button>
           </td></tr>`).join("")}</tbody></table>`;
 
+      list.querySelectorAll("[data-limits]").forEach(b => b.addEventListener("click", () => {
+        const t = items.find(x => x.id === b.dataset.limits);
+        const num = (fd, k) => { const v = (fd.get(k) || "").trim(); return v === "" ? null : Number(v); };
+        openModal(`Event limits · ${t.name}`, `
+          <div class="muted" style="margin-bottom:14px;font-size:13px">How fast this tenant may send events to <code>POST /events</code>.
+            Leave a field empty to use the platform default. Changes apply within about 30 seconds.</div>
+          <div class="row">
+            <div class="field"><label>Sustained rate (events / second)</label>
+              <input name="rate" type="number" step="any" min="0.001" value="${t.rate_limit_per_second ?? ""}" placeholder="platform default"></div>
+            <div class="field"><label>Burst (events at once)</label>
+              <input name="burst" type="number" min="1" value="${t.rate_burst ?? ""}" placeholder="platform default"></div>
+          </div>
+          <div class="field"><label>Daily quota (events per UTC day)</label>
+            <input name="quota" type="number" min="1" value="${t.daily_quota ?? ""}" placeholder="platform default (unlimited unless configured)"></div>`, {
+          onSubmit: async fd => {
+            await api(`/admin/tenants/${t.id}`, { method: "PATCH", body: JSON.stringify({
+              rate_limit_per_second: num(fd, "rate"), rate_burst: num(fd, "burst"), daily_quota: num(fd, "quota"),
+            }) });
+            toast("Limits updated", "ok"); load();
+          },
+        });
+      }));
       list.querySelectorAll("[data-rename]").forEach(b => b.addEventListener("click", () => {
         const t = items.find(x => x.id === b.dataset.rename);
         openModal("Rename tenant", `
