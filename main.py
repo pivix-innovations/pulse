@@ -22,6 +22,7 @@ from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
 from api.audit import audit_middleware
 from api.v1.audit_log import router as audit_log_router
+from api.v1.category_preferences import router as category_preferences_router
 from api.v1.preferences import router as preferences_router
 from api.v1.suppressions import router as suppressions_router
 from api.v1.unsubscribe import router as unsubscribe_router
@@ -172,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(templates_router, prefix="/api/v1")
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(preferences_router, prefix="/api/v1")
+    app.include_router(category_preferences_router, prefix="/api/v1")
     app.include_router(suppressions_router, prefix="/api/v1")
     app.include_router(audit_log_router, prefix="/api/v1")
     app.include_router(unsubscribe_router, prefix="/api/v1")

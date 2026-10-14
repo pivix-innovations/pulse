@@ -205,7 +205,7 @@ class NotificationService:
             attempts.extend(
                 await attempts_for(
                     uow, self._rendering, notification, recipient, definition.channels,
-                    datetime.now(timezone.utc),
+                    datetime.now(timezone.utc), category=definition.category,
                 )
             )
 

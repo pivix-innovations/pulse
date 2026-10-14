@@ -225,6 +225,15 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
   list. Later sends to that address on that channel are skipped, whichever recipient or workflow they come from; other
   channels still go out. Admins can also add or remove entries by hand. Addresses are matched case-insensitively
   (email) and without spaces (phone). The `pulse.suppressed_sends` metric counts skips.
+  - **Categories and per-category opt-out:** a workflow can declare a `category` (`"category": "marketing"` in its
+    definition). Recipients opt out of a category on one channel or all of them with
+    `PUT /api/v1/category-preferences` (`external_ref`, `category`, optional `channel`, `opted_in`); a channel-specific
+    choice beats an "all channels" one, and `DELETE` forgets a choice. Workflows without a category (password resets,
+    receipts) are never filtered this way. When a workflow has a category, `{{ unsubscribe_url }}` becomes a "stop this
+    category" link for that recipient and channel instead of blocking the address.
+  - **One send policy:** channel opt-outs, category opt-outs and the suppression list are checked in one place and
+    apply to first sends, digests, sequence steps and fallback escalations alike (a skipped sequence step records
+    why). `pulse.category_optouts` counts category skips.
   - **Unsubscribe links:** with `PULSE_SECURITY__UNSUBSCRIBE_KEY` and `PULSE_API__PUBLIC_URL` set, every template can use
     `{{ unsubscribe_url }}`: a signed link (no login) to a confirm page whose button adds the address to the list. The
     same URL accepts an RFC 8058 one-click `POST`, so it can go in a `List-Unsubscribe` header too.

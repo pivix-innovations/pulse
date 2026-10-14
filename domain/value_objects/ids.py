@@ -140,3 +140,8 @@ class SuppressionId(_Id):
 @dataclass(frozen=True, slots=True)
 class AuditEntryId(_Id):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryPreferenceId(_Id):
+    pass

@@ -21,6 +21,7 @@ from repositories.operations_repository import PostgresOperationsRepository
 from repositories.outbox_repository import PostgresOutboxRepository
 from repositories.preference_repository import PostgresPreferenceRepository
 from repositories.audit_repository import PostgresAuditRepository
+from repositories.category_preference_repository import PostgresCategoryPreferenceRepository
 from repositories.suppression_repository import PostgresSuppressionRepository
 from repositories.provider_call_repository import PostgresProviderCallRepository
 from repositories.provider_repository import PostgresProviderRepository
@@ -50,6 +51,7 @@ class SqlAlchemyUnitOfWork:
         self.preferences = PostgresPreferenceRepository(self._session)
         self.suppressions = PostgresSuppressionRepository(self._session)
         self.audit = PostgresAuditRepository(self._session)
+        self.category_preferences = PostgresCategoryPreferenceRepository(self._session)
         self.events = PostgresEventRepository(self._session)
         self.workflows = PostgresWorkflowRepository(self._session)
         self.recipients = PostgresRecipientRepository(self._session)

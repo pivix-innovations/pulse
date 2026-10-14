@@ -12,6 +12,7 @@ from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, OutboxEntr
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
 from services.settlement import settle_notification
+from services.send_policy import blocked_reason
 from services.templates import TemplateUnavailable, resolve
 from workflows.registry import WorkflowDefinition
 
@@ -178,6 +179,13 @@ class ReconciliationService:
                 source.id,
                 fallback_channel.value,
             )
+            return False
+
+        blocked = await blocked_reason(
+            uow, source.tenant_id, recipient, fallback_channel, definition.category
+        )
+        if blocked:
+            logger.info("Not escalating attempt %s to '%s': %s", source.id, fallback_channel.value, blocked)
             return False
 
         try:

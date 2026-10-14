@@ -5,6 +5,7 @@ from typing import Protocol
 from services.ports.repositories import (
     ApiKeyRepository,
     AuditRepository,
+    CategoryPreferenceRepository,
     DeadLetterRepository,
     DigestRepository,
     DeliveryAttemptRepository,
@@ -42,6 +43,7 @@ class UnitOfWork(Protocol):
     preferences: PreferenceRepository
     suppressions: SuppressionRepository
     audit: AuditRepository
+    category_preferences: CategoryPreferenceRepository
     events: EventRepository
     workflows: WorkflowRepository
     recipients: RecipientRepository

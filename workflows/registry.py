@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,9 @@ class WorkflowDefinition:
     steps: tuple[Step, ...] = ()
     # When present, events are buffered per recipient and sent as one digest.
     digest: DigestConfig | None = None
+    # Kind of message ("marketing", "billing", ...). Recipients can opt out of a category; workflows
+    # without one (password resets, receipts) are never filtered by category preferences.
+    category: str | None = None
 
     @property
     def is_sequence(self) -> bool:
@@ -64,6 +68,8 @@ class WorkflowDefinition:
             out["steps"] = encode_steps(self.steps)
         if self.digest:
             out["digest"] = self.digest.as_dict()
+        if self.category:
+            out["category"] = self.category
         return out
 
     @classmethod
@@ -80,7 +86,19 @@ class WorkflowDefinition:
             fallback_templates=tuple(decode(i) for i in raw.get("fallback_templates", [])),
             steps=parse_steps(raw["steps"]) if raw.get("steps") else (),
             digest=parse_digest(raw["digest"]) if raw.get("digest") is not None else None,
+            category=parse_category(raw.get("category")),
         )
+
+
+_CATEGORY = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+
+
+def parse_category(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not _CATEGORY.match(raw):
+        raise ValueError("'category' must be 1-40 characters: lowercase letters, digits, '-' or '_'")
+    return raw
 
 
 _WELCOME = WorkflowDefinition(

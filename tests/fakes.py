@@ -214,6 +214,28 @@ class InMemoryDeliveryAttemptRepository:
         self.items[str(attempt.id)] = attempt
 
 
+class InMemoryCategoryPreferenceRepository:
+    def __init__(self) -> None:
+        self.items: list = []
+
+    async def list_for_recipient(self, tenant_id, recipient_id):
+        return [p for p in self.items if p.tenant_id == tenant_id and p.recipient_id == recipient_id]
+
+    async def upsert(self, pref) -> None:
+        for existing in self.items:
+            if (existing.tenant_id, existing.recipient_id, existing.category, existing.channel) == (
+                pref.tenant_id, pref.recipient_id, pref.category, pref.channel
+            ):
+                existing.opted_in = pref.opted_in
+                return
+        self.items.append(pref)
+
+    async def delete(self, tenant_id, pref_id) -> bool:
+        before = len(self.items)
+        self.items = [p for p in self.items if not (p.tenant_id == tenant_id and p.id == pref_id)]
+        return len(self.items) < before
+
+
 class InMemoryAuditRepository:
     def __init__(self) -> None:
         self.items: list = []
@@ -1009,6 +1031,7 @@ class InMemoryUnitOfWork:
         self.preferences = InMemoryPreferenceRepository()
         self.suppressions = InMemorySuppressionRepository()
         self.audit = InMemoryAuditRepository()
+        self.category_preferences = InMemoryCategoryPreferenceRepository()
         self.events = InMemoryEventRepository()
         self.workflows = InMemoryWorkflowRepository()
         self.recipients = InMemoryRecipientRepository()

@@ -52,6 +52,9 @@ class PulseMetrics:
         self.suppressed_sends = meter.create_counter(
             "pulse.suppressed_sends", unit="{send}", description="Sends skipped because the address is suppressed"
         )
+        self.category_optouts = meter.create_counter(
+            "pulse.category_optouts", unit="{send}", description="Sends skipped because the recipient opted out of the category"
+        )
         self.digest_flushes = meter.create_counter(
             "pulse.digest.flushes", unit="{digest}", description="Digests sent (outcome: sent/failed)"
         )

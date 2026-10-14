@@ -12,6 +12,7 @@ from database.models.identity import (
     UserModel,
 )
 from database.models.audit import AuditLogModel
+from database.models.category_preference import CategoryPreferenceModel
 from database.models.inbox import InboxMessageModel
 from database.models.notification import NotificationModel
 from database.models.outbox import OutboxEntryModel
@@ -27,6 +28,7 @@ from database.models.workflow import WorkflowModel
 __all__ = [
     "ApiKeyModel",
     "AuditLogModel",
+    "CategoryPreferenceModel",
     "Base",
     "DeadLetterModel",
     "DeliveryAttemptModel",

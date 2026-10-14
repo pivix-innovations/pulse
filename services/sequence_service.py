@@ -17,6 +17,7 @@ from services.attempts import build_attempt, outbox_entries
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
 from services.settlement import settle_notification
+from services.send_policy import blocked_reason
 from services.templates import resolve
 from telemetry.metrics import get_metrics
 from workflows.registry import WorkflowDefinition
@@ -73,9 +74,9 @@ class SequenceEngine:
             if not ok:
                 self._skip(run, why, now)
             else:
-                attempt = await self._create_attempt(uow, notification, recipient, step, now)
+                blocked, attempt = await self._create_attempt(uow, notification, recipient, step, now, definition.category)
                 if attempt is None:
-                    self._skip(run, f"recipient opted out of {step.channel.value}", now)
+                    self._skip(run, blocked or f"{step.channel.value} already attempted", now)
                 else:
                     run.mark_done(attempt.id, now)
                     created = 1
@@ -105,20 +106,22 @@ class SequenceEngine:
             )
         )
 
-    async def _create_attempt(self, uow, notification, recipient, step: Step, now):
+    async def _create_attempt(self, uow, notification, recipient, step: Step, now, category: str | None = None):
+        """(why it was blocked, the attempt): exactly one of them is set."""
         prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
-        if any(p.channel is step.channel and not p.opted_in for p in prefs):
-            return None
+        blocked = await blocked_reason(uow, notification.tenant_id, recipient, step.channel, category, prefs=prefs)
+        if blocked:
+            return blocked, None
         if await uow.delivery_attempts.get_by_dispatch(notification.id, recipient.id, step.channel) is not None:
-            return None
+            return None, None
         template = await resolve(uow, notification.tenant_id, step.template, recipient.locale)
-        attempt = build_attempt(self._rendering, notification, recipient, template)
+        attempt = build_attempt(self._rendering, notification, recipient, template, category=category)
         window = next((p.quiet_hours for p in prefs if p.channel is step.channel and p.quiet_hours), None)
         if window is not None:
             attempt.next_retry_at = window.window_end(now)   # held until their quiet window ends
         await uow.delivery_attempts.add_many([attempt])
         await uow.outbox.add_many(outbox_entries(notification, [attempt]))
-        return attempt
+        return None, attempt
 
     async def _should_run(self, uow, run, step: Step, definition, notification) -> tuple[bool, str]:
         cond = step.when

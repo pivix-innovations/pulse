@@ -59,7 +59,7 @@ class DigestFlusher:
         digest = SimpleNamespace(count=len(payloads), items=payloads, first=payloads[0], last=payloads[-1])
         attempts = await attempts_for(
             uow, self._rendering, anchor, recipient, definition.channels, now,
-            payload=payloads[-1], extra={"digest": digest},
+            payload=payloads[-1], extra={"digest": digest}, category=definition.category,
         )
         await uow.delivery_attempts.add_many(attempts)
         await uow.outbox.add_many(outbox_entries(anchor, attempts))

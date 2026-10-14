@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Protocol, Sequence
 
 from domain.entities.audit import AuditEntry
+from domain.entities.category_preference import CategoryPreference
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
@@ -25,6 +26,7 @@ from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import (
+    CategoryPreferenceId,
     SuppressionId,
     DeliveryAttemptId,
     ApiKeyId,
@@ -154,6 +156,18 @@ class PreferenceRepository(Protocol):
     async def upsert(self, preference: Preference) -> None: ...
 
     async def delete(self, tenant_id: TenantId, preference_id: PreferenceId) -> bool: ...
+
+
+class CategoryPreferenceRepository(Protocol):
+    """Persistence port for per-category subscriber preferences."""
+
+    async def list_for_recipient(
+        self, tenant_id: TenantId, recipient_id: RecipientId
+    ) -> list[CategoryPreference]: ...
+
+    async def upsert(self, pref: CategoryPreference) -> None: ...
+
+    async def delete(self, tenant_id: TenantId, pref_id: CategoryPreferenceId) -> bool: ...
 
 
 class AuditRepository(Protocol):

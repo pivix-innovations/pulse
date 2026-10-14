@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from domain.enums import ChannelType
 from services.rendering_service import RenderingService
-from services.unsubscribe import UnsubscribeLinks
+from services.unsubscribe import UnsubscribeLinks, UnsubscribeTarget
 from tests.api.test_events_notifications import EVENT
 
 LINKS = UnsubscribeLinks("k" * 32, "https://pulse.test")
@@ -10,7 +10,7 @@ LINKS = UnsubscribeLinks("k" * 32, "https://pulse.test")
 
 def test_token_round_trips_and_rejects_tampering_and_other_keys(world):
     t = LINKS.token(world.tenant_id, ChannelType.EMAIL, "Ada@Example.com")
-    assert LINKS.verify(t) == (world.tenant_id, ChannelType.EMAIL, "ada@example.com")
+    assert LINKS.verify(t) == UnsubscribeTarget(world.tenant_id, ChannelType.EMAIL, "ada@example.com")
     body, sig = t.split(".")
     assert LINKS.verify(f"{body}x.{sig}") is None
     assert LINKS.verify("garbage") is None
@@ -67,4 +67,4 @@ async def test_templates_can_use_unsubscribe_url(world):
     [attempt] = [a for a in world.uow.delivery_attempts.items.values() if str(a.notification_id) == nid]
     url = attempt.body.split("Leave: ")[1]
     assert url.startswith("https://pulse.test/api/v1/unsubscribe?token=")
-    assert LINKS.verify(url.split("token=")[1])[2] == "u1@example.com"
+    assert LINKS.verify(url.split("token=")[1]).address == "u1@example.com"

@@ -9,7 +9,8 @@ from fastapi.responses import HTMLResponse
 
 from api.dependencies import get_uow
 from domain.entities.suppression import Suppression, SuppressionReason
-from domain.value_objects.ids import SuppressionId
+from domain.entities.category_preference import CategoryPreference
+from domain.value_objects.ids import CategoryPreferenceId, SuppressionId
 from repositories.uow import SqlAlchemyUnitOfWork
 
 router = APIRouter(prefix="/unsubscribe", tags=["unsubscribe"])
@@ -36,10 +37,13 @@ async def confirm_unsubscribe(request: Request, token: str = Query(min_length=1,
     parsed = links.verify(token) if links else None
     if parsed is None:
         return _page("Link not valid", "<p>This unsubscribe link is invalid or has expired.</p>", 404)
-    _, channel, address = parsed
+    what = (
+        f"<b>{escape(parsed.category)}</b> {escape(parsed.channel.value)} messages"
+        if parsed.category else f"{escape(parsed.channel.value)} messages to <b>{escape(parsed.address)}</b>"
+    )
     return _page(
         "Unsubscribe",
-        f"<p>Stop {escape(channel.value)} messages to <b>{escape(address)}</b>?</p>"
+        f"<p>Stop {what}?</p>"
         f"<form method=post><input type=hidden name=token value='{escape(token)}'>"
         "<button style='font:inherit;padding:.5rem 1rem'>Unsubscribe</button></form>",
     )
@@ -58,11 +62,22 @@ async def unsubscribe(
     parsed = links.verify(token) if links and token else None
     if parsed is None:
         return _page("Link not valid", "<p>This unsubscribe link is invalid or has expired.</p>", 404)
-    tenant_id, channel, address = parsed
     async with uow:
-        await uow.suppressions.add(Suppression(
-            id=SuppressionId.new(), tenant_id=tenant_id, channel=channel, address=address,
-            reason=SuppressionReason.UNSUBSCRIBE, detail="Unsubscribe link",
-        ))
+        recipient = (
+            await uow.recipients.get_by_external_ref(parsed.tenant_id, parsed.recipient_ref)
+            if parsed.category and parsed.recipient_ref else None
+        )
+        if recipient is not None:
+            await uow.category_preferences.upsert(CategoryPreference(
+                id=CategoryPreferenceId.new(), tenant_id=parsed.tenant_id, recipient_id=recipient.id,
+                category=parsed.category, channel=parsed.channel.value, opted_in=False,
+            ))
+            done = f"<p>You will no longer receive <b>{escape(parsed.category)}</b> {escape(parsed.channel.value)} messages.</p>"
+        else:   # no category (or the recipient is gone): block the address itself
+            await uow.suppressions.add(Suppression(
+                id=SuppressionId.new(), tenant_id=parsed.tenant_id, channel=parsed.channel, address=parsed.address,
+                reason=SuppressionReason.UNSUBSCRIBE, detail="Unsubscribe link",
+            ))
+            done = f"<p>{escape(parsed.address)} will no longer receive {escape(parsed.channel.value)} messages.</p>"
         await uow.commit()
-    return _page("You are unsubscribed", f"<p>{escape(address)} will no longer receive {escape(channel.value)} messages.</p>")
+    return _page("You are unsubscribed", done)

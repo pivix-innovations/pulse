@@ -8,11 +8,10 @@ from domain.entities.delivery import DeliveryAttempt
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
-from domain.enums import ChannelType
 from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId, TemplateId
 from services.ports.uow import UnitOfWork
+from services.send_policy import address_for, blocked_reason
 from services.templates import resolve
-from telemetry.metrics import get_metrics
 from telemetry.tracing import traceparent
 from services.rendering_service import RenderingService
 from workflows.channel_template import ChannelTemplate
@@ -37,11 +36,13 @@ def build_attempt(
     *,
     payload: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
+    category: str | None = None,
 ) -> DeliveryAttempt:
     """Render one channel. `payload` overrides the notification's (digests render the latest event);
     `extra` adds template variables (digests add `digest`)."""
     link = rendering.unsubscribe.url_for(
-        notification.tenant_id, template.channel, _address_for(recipient, template.channel)
+        notification.tenant_id, template.channel, address_for(recipient, template.channel),
+        category=category, recipient_ref=recipient.external_ref,
     ) if rendering.unsubscribe else None
     if link:
         extra = {"unsubscribe_url": link, **(extra or {})}
@@ -89,14 +90,6 @@ def outbox_entries(notification: Notification, attempts: Sequence[DeliveryAttemp
     ]
 
 
-def _address_for(recipient: Recipient, channel: ChannelType) -> str | None:
-    if channel is ChannelType.EMAIL:
-        return recipient.email
-    if channel is ChannelType.SMS:
-        return recipient.phone
-    return None
-
-
 async def attempts_for(
     uow: UnitOfWork,
     rendering: RenderingService,
@@ -107,21 +100,19 @@ async def attempts_for(
     *,
     payload: dict[str, Any] | None = None,
     extra: dict[str, Any] | None = None,
+    category: str | None = None,
 ) -> list[DeliveryAttempt]:
     """One attempt per channel the recipient has not opted out of; quiet hours hold an attempt until the window ends."""
     prefs = await uow.preferences.list_for_recipient(notification.tenant_id, recipient.id)
-    opted_out = {p.channel for p in prefs if not p.opted_in}
     quiet = {p.channel: p.quiet_hours for p in prefs if p.quiet_hours is not None}
     attempts = []
     for template in templates:
-        if template.channel in opted_out:
-            continue
-        address = _address_for(recipient, template.channel)
-        if address and await uow.suppressions.is_suppressed(notification.tenant_id, template.channel, address):
-            get_metrics().suppressed_sends.add(1, {"channel": template.channel.value})
+        if await blocked_reason(uow, notification.tenant_id, recipient, template.channel, category, prefs=prefs):
             continue
         template = await resolve(uow, notification.tenant_id, template, recipient.locale)
-        attempt = build_attempt(rendering, notification, recipient, template, payload=payload, extra=extra)
+        attempt = build_attempt(
+            rendering, notification, recipient, template, payload=payload, extra=extra, category=category
+        )
         window = quiet.get(template.channel)
         if window is not None:
             attempt.next_retry_at = window.window_end(now)
