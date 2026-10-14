@@ -11,6 +11,7 @@ from database.models.identity import (
     TenantModel,
     UserModel,
 )
+from database.models.audit import AuditLogModel
 from database.models.inbox import InboxMessageModel
 from database.models.notification import NotificationModel
 from database.models.outbox import OutboxEntryModel
@@ -25,6 +26,7 @@ from database.models.workflow import WorkflowModel
 
 __all__ = [
     "ApiKeyModel",
+    "AuditLogModel",
     "Base",
     "DeadLetterModel",
     "DeliveryAttemptModel",

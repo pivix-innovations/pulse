@@ -204,6 +204,23 @@ class InMemoryDeliveryAttemptRepository:
         self.items[str(attempt.id)] = attempt
 
 
+class InMemoryAuditRepository:
+    def __init__(self) -> None:
+        self.items: list = []
+
+    async def add(self, entry) -> None:
+        self.items.append(entry)
+
+    async def list(self, tenant_id, *, resource_type=None, resource_id=None, limit=50, offset=0):
+        rows = [
+            e for e in reversed(self.items)
+            if e.tenant_id == tenant_id
+            and (resource_type is None or e.resource_type == resource_type)
+            and (resource_id is None or e.resource_id == resource_id)
+        ]
+        return rows[offset : offset + limit]
+
+
 class InMemorySuppressionRepository:
     def __init__(self) -> None:
         self.items: list[Suppression] = []
@@ -981,6 +998,7 @@ class InMemoryUnitOfWork:
         self.notifications = InMemoryNotificationRepository(self.delivery_attempts)
         self.preferences = InMemoryPreferenceRepository()
         self.suppressions = InMemorySuppressionRepository()
+        self.audit = InMemoryAuditRepository()
         self.events = InMemoryEventRepository()
         self.workflows = InMemoryWorkflowRepository()
         self.recipients = InMemoryRecipientRepository()

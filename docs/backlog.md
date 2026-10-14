@@ -31,7 +31,7 @@
 | C2 | Sentinel client: replace the stub ✅ | High | M | `clients/sentinel_client.py` is in-memory; wire the real user/tenant lookup with caching and timeouts. |
 | C3 | Tenant isolation tests ✅ | High | S | Assert every repository query and API route is tenant-scoped (cross-tenant read/write attempts return 404). |
 | C4 | API key rotation & scopes ✅ | Medium | M | Expiry, last-used tracking, revocation, read-only vs ingest scopes. |
-| C5 | Audit log | Medium | M | Who changed workflows, templates, providers, API keys. |
+| C5 | Audit log ✅ | Medium | M | Who changed workflows, templates, providers, API keys. `GET /api/v1/audit-log` (admin); console page still to do. |
 
 ## Phase D — Observability
 

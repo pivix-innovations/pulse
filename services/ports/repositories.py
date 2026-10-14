@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol, Sequence
 
+from domain.entities.audit import AuditEntry
 from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.device import DeviceToken
@@ -149,6 +150,17 @@ class PreferenceRepository(Protocol):
     async def upsert(self, preference: Preference) -> None: ...
 
     async def delete(self, tenant_id: TenantId, preference_id: PreferenceId) -> bool: ...
+
+
+class AuditRepository(Protocol):
+    """Persistence port for the change audit log."""
+
+    async def add(self, entry: AuditEntry) -> None: ...
+
+    async def list(
+        self, tenant_id: TenantId, *, resource_type: str | None = None, resource_id: str | None = None,
+        limit: int = 50, offset: int = 0,
+    ) -> list[AuditEntry]: ...
 
 
 class SuppressionRepository(Protocol):

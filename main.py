@@ -20,6 +20,8 @@ from api.v1.events import router as events_router
 from api.v1.inbox import router as inbox_router
 from api.v1.metrics import router as metrics_router
 from api.v1.notifications import router as notifications_router
+from api.audit import audit_middleware
+from api.v1.audit_log import router as audit_log_router
 from api.v1.preferences import router as preferences_router
 from api.v1.suppressions import router as suppressions_router
 from api.v1.unsubscribe import router as unsubscribe_router
@@ -115,6 +117,8 @@ def create_app() -> FastAPI:
             content={"detail": "Resource conflicts with an existing record"},
         )
 
+    app.middleware("http")(audit_middleware)
+
     @app.middleware("http")
     async def record_request_metrics(request: Request, call_next):
         started = time.perf_counter()
@@ -147,6 +151,7 @@ def create_app() -> FastAPI:
     app.include_router(workflows_router, prefix="/api/v1")
     app.include_router(preferences_router, prefix="/api/v1")
     app.include_router(suppressions_router, prefix="/api/v1")
+    app.include_router(audit_log_router, prefix="/api/v1")
     app.include_router(unsubscribe_router, prefix="/api/v1")
     app.include_router(provider_catalog_router, prefix="/api/v1")
     app.include_router(providers_router, prefix="/api/v1")

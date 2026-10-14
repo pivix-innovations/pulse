@@ -135,3 +135,8 @@ class SessionId(_Id):
 @dataclass(frozen=True, slots=True)
 class SuppressionId(_Id):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEntryId(_Id):
+    pass

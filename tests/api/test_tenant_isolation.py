@@ -198,6 +198,7 @@ async def test_after_every_attack_tenant_a_is_untouched(iso):
     assert len((await a.get("/api/v1/dead-letters")).json()) == 1
     assert [x["address"] for x in (await a.get("/api/v1/suppressions")).json()] == ["blocked@example.com"]
     assert (await iso.b.get("/api/v1/suppressions")).json() == []
+    assert not any(e["actor_id"] and e["resource_id"] == ids["workflow"] for e in (await iso.b.get("/api/v1/audit-log")).json())
     assert (await a.get(f"/api/v1/notifications/{ids['notification']}")).json()["attempts"][0]["status"] == "pending"
     keys = {k["id"]: k for k in (await iso.a_admin.get("/api/v1/tenant/api-keys")).json()}
     assert keys[ids["api_key"]]["is_active"] is True
@@ -455,6 +456,7 @@ COVERED = {
     ("POST", "/api/v1/dead-letters/{dead_letter_id}/retry"), ("DELETE", "/api/v1/tenant/api-keys/{key_id}"),
     ("DELETE", "/api/v1/tenant/members/{membership_id}"), ("POST", "/api/v1/tenant/api-keys/{key_id}/rotate"),
     # lists and aggregates
+    ("GET", "/api/v1/audit-log"),   # tests/api/test_audit_log.py + assertion after the attacks
     ("GET", "/api/v1/notifications"), ("GET", "/api/v1/events"), ("GET", "/api/v1/dead-letters"),
     ("GET", "/api/v1/providers"), ("GET", "/api/v1/providers/health"), ("GET", "/api/v1/workflows"),
     ("GET", "/api/v1/templates"), ("GET", "/api/v1/metrics"), ("GET", "/api/v1/tenant/api-keys"),

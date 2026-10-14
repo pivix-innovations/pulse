@@ -50,7 +50,9 @@ async def get_current_user(
     if not pulse_session:
         raise HTTPException(status_code=401, detail="Not signed in")
     try:
-        return await request.app.state.identity_service.resolve_session(pulse_session)
+        auth = await request.app.state.identity_service.resolve_session(pulse_session)
+        request.state.actor = ("user", str(auth.user.id), auth.user.email)
+        return auth
     except AuthenticationError as exc:
         raise HTTPException(status_code=401, detail=str(exc))
 
@@ -80,6 +82,10 @@ async def require_tenant(
         if principal is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
         request.state.scopes = principal.scopes     # what this key may do; sessions leave it unset
+        request.state.actor = (
+            ("api_key", str(principal.key_id), None) if principal.key_id else ("env_key", None, None)
+        )
+        request.state.audit_tenant_id = principal.tenant_id
         return principal.tenant_id
 
     if pulse_session:
@@ -92,6 +98,7 @@ async def require_tenant(
             raise HTTPException(status_code=400, detail="Invalid X-Tenant-Id")
         if not can_access_tenant(auth, tenant_id):
             raise HTTPException(status_code=403, detail="Not a member of this tenant")
+        request.state.audit_tenant_id = tenant_id
         return tenant_id
 
     raise HTTPException(status_code=401, detail="Provide an API key or sign in")
@@ -135,6 +142,7 @@ async def require_tenant_admin(
         raise HTTPException(status_code=400, detail="Invalid X-Tenant-Id")
     if not is_tenant_admin(auth, tenant_id):
         raise HTTPException(status_code=403, detail="Tenant admin access required")
+    request.state.audit_tenant_id = tenant_id
     return tenant_id
 
 

@@ -251,6 +251,12 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
 - **Useful when:** you are a platform serving multiple customers, or an organisation with several product teams that
   must not see each other's data.
 
+- **Audit log (`GET /api/v1/audit-log`, admin):** every successful create, update, delete, publish, rollback or rotate
+  on workflows, templates, providers, API keys, members and suppressions is recorded with who did it (console user
+  email, or API key id), the resource id and a timestamp. Filter by `resource_type` / `resource_id`. Entries hold ids
+  only, never request bodies, so secrets cannot end up in the log. A failure to write an entry never fails the change.
+  - **Business value:** answers "who changed this workflow?" after a bad send, and supports compliance reviews.
+
 ---
 
 ## 11. Operating Pulse
