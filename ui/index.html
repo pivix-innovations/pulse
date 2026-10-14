@@ -592,6 +592,9 @@ const icons = {
   users: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg>',
 };
 
+icons.block = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>';
+icons.audit = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg>';
+
 const routes = {
   overview:    { title: "Overview",       desc: "Delivery metrics across the tenant",             icon: icons.overview,    section: "Monitor",  render: renderOverview },
   live:        { title: "Live Stream",    desc: "In-app notifications over SSE, as they arrive",  icon: icons.live,        section: "Monitor",  render: renderLive },
@@ -602,8 +605,10 @@ const routes = {
   templates:   { title: "Templates",      desc: "Channel message templates",                      icon: icons.templates,   section: "Configure", render: renderTemplates },
   providers:   { title: "Providers",      desc: "Per-channel delivery providers",                 icon: icons.providers,   section: "Configure", render: renderProviders },
   preferences: { title: "Preferences",    desc: "Per-recipient channel opt-ins and quiet hours",  icon: icons.preferences, section: "Configure", render: renderPreferences },
+  suppressions:{ title: "Suppressions",  desc: "Addresses that must not be sent to",             icon: icons.block,       section: "Configure", render: renderSuppressions },
   devices:     { title: "Devices",        desc: "Register push device tokens",                    icon: icons.devices,     section: "Configure", render: renderDevices },
   team:        { title: "Team",           desc: "Who can access this tenant, and as what role",   icon: icons.team,        section: "Access",   render: renderTeam,    visible: isTenantAdmin },
+  audit:       { title: "Audit Log",     desc: "Who changed what in this tenant",                icon: icons.audit,       section: "Access",   render: renderAuditLog, visible: isTenantAdmin },
   apikeys:     { title: "API Keys",       desc: "Machine ingress credentials for this tenant",    icon: icons.key,         section: "Access",   render: renderApiKeys, visible: isTenantAdmin },
   tenants:     { title: "Tenants",        desc: "Every customer organization on the platform",    icon: icons.building,    section: "Platform", render: renderTenants, visible: () => state.me?.is_platform_admin },
   users:       { title: "Users",          desc: "Every account on the platform",                  icon: icons.users,       section: "Platform", render: renderUsers,   visible: () => state.me?.is_platform_admin },
@@ -1854,6 +1859,7 @@ function renderPreferences(el) {
           <input name="recipient" placeholder="Recipient external ref (e.g. user-123)" required spellcheck="false" style="flex:1;min-width:220px">
           <button class="btn primary" type="submit">Load preferences</button>
           <button class="btn" type="button" id="upsert-btn">+ Set preference</button>
+          <button class="btn" type="button" id="cat-btn">+ Set category</button>
         </form>
       </div>
     </div>
@@ -1865,7 +1871,10 @@ function renderPreferences(el) {
     currentRecipient = recipient;
     const out = $("#pref-result", el);
     try {
-      const items = await api(`/preferences?recipient=${encodeURIComponent(recipient)}`);
+      const [items, cats] = await Promise.all([
+        api(`/preferences?recipient=${encodeURIComponent(recipient)}`),
+        api(`/category-preferences?recipient=${encodeURIComponent(recipient)}`),
+      ]);
       out.innerHTML = `<div class="card">
         <div class="card-head"><div class="card-title">Preferences for <span class="mono">${esc(recipient)}</span></div></div>
         <div class="card-body flush table-wrap">
@@ -1878,7 +1887,23 @@ function renderPreferences(el) {
               <td class="muted">${p.quiet_hours ? esc(`${p.quiet_hours.start} – ${p.quiet_hours.end} (${p.quiet_hours.timezone})`) : "—"}</td>
               <td style="text-align:right"><button class="btn sm danger" data-del="${esc(p.id)}">Delete</button></td>
             </tr>`).join("")}</tbody></table>`}
-        </div></div>`;
+        </div></div>
+        <div class="card" style="margin-top:16px">
+          <div class="card-head"><div><div class="card-title">Categories</div>
+            <div class="card-sub">Opt-outs for workflows that declare a <span class="mono">category</span>. Removing a row subscribes them again.</div></div></div>
+          <div class="card-body flush table-wrap">
+            ${cats.length === 0 ? emptyState("No category choices", "This recipient receives every category.") : `
+            <table><thead><tr><th>Category</th><th>Channel</th><th>Choice</th><th></th></tr></thead>
+            <tbody>${cats.map(c => `<tr>
+              <td class="mono">${esc(c.category)}</td>
+              <td>${c.channel === "all" ? '<span class="muted">all channels</span>' : badge(chLabel(c.channel))}</td>
+              <td>${c.opted_in ? '<span class="badge green plain">subscribed</span>' : '<span class="badge red plain">opted out</span>'}</td>
+              <td style="text-align:right"><button class="btn sm danger" data-del-cat="${esc(c.id)}">Remove</button></td></tr>`).join("")}</tbody></table>`}
+          </div></div>`;
+      out.querySelectorAll("[data-del-cat]").forEach(b => b.addEventListener("click", async () => {
+        try { await api(`/category-preferences/${b.dataset.delCat}`, { method: "DELETE" }); toast("Choice removed", "ok"); load(recipient); }
+        catch (err) { toast(err.message, "err"); }
+      }));
       out.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
         if (!confirm("Delete this preference?")) return;
         try { await api(`/preferences/${b.dataset.del}`, { method: "DELETE" }); toast("Preference deleted", "ok"); load(recipient); }
@@ -1890,6 +1915,28 @@ function renderPreferences(el) {
   $("#pref-search", el).addEventListener("submit", e => {
     e.preventDefault();
     load(new FormData(e.target).get("recipient").trim());
+  });
+
+  $("#cat-btn", el).addEventListener("click", () => {
+    const ref = currentRecipient || $("#pref-search input", el).value.trim();
+    openModal("Set category preference", `
+      <div class="field"><label>Recipient external ref</label><input name="external_ref" required value="${esc(ref)}" placeholder="user-123"></div>
+      <div class="field"><label>Category</label><input name="category" required placeholder="marketing" pattern="[a-z0-9][a-z0-9_-]{0,39}" title="Lowercase letters, digits, - or _"></div>
+      <div class="row">
+        <div class="field"><label>Channel</label>
+          <select name="channel"><option value="">All channels</option>${["email", "push", "sms", "in_app"].map(c => `<option value="${c}">${chLabel(c)}</option>`).join("")}</select></div>
+        <div class="field"><label>Choice</label>
+          <select name="opted_in"><option value="false">Opted out</option><option value="true">Subscribed</option></select></div>
+      </div>`, {
+      onSubmit: async fd => {
+        const body = { external_ref: fd.get("external_ref"), category: fd.get("category"), opted_in: fd.get("opted_in") === "true" };
+        if (fd.get("channel")) body.channel = fd.get("channel");
+        await api("/category-preferences", { method: "PUT", body: JSON.stringify(body) });
+        toast("Category preference saved", "ok");
+        $("#pref-search input", el).value = body.external_ref;
+        load(body.external_ref);
+      },
+    });
   });
 
   $("#upsert-btn", el).addEventListener("click", () => {
@@ -1924,6 +1971,119 @@ function renderPreferences(el) {
       },
     });
   });
+}
+
+/* ═══ Suppressions ════════════════════════════════════════ */
+
+const REASON_COLOR = { bounce: "red", complaint: "red", unsubscribe: "amber", manual: "" };
+
+function pagerHtml(offset, count, page) {
+  return `<span class="muted">${count === 0 ? "No more rows" : `Showing ${offset + 1}–${offset + count}`}</span>
+    <span><button class="btn sm" data-prev ${offset === 0 ? "disabled" : ""}>Previous</button>
+    <button class="btn sm" data-next ${count < page ? "disabled" : ""}>Next</button></span>`;
+}
+
+function renderSuppressions(el) {
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Suppression list</div>
+        <div class="card-sub">Bounces, spam complaints, unsubscribes and STOP replies are added automatically. Sends to these addresses are skipped.</div></div>
+        <button class="btn primary" id="add-btn">+ Suppress an address</button>
+      </div>
+      <div class="card-body flush table-wrap" id="sup-list">${emptyState("Loading…", "")}</div>
+      <div class="card-body toolbar" id="sup-pager" style="justify-content:space-between"></div>
+    </div>`;
+  const PAGE = 25;
+  let offset = 0;
+  async function load() {
+    const list = $("#sup-list", el), pager = $("#sup-pager", el);
+    try {
+      const items = await api(`/suppressions?limit=${PAGE}&offset=${offset}`);
+      if (items.length === 0 && offset === 0) {
+        list.innerHTML = emptyState("Nothing suppressed", "Hard bounces and spam complaints will appear here automatically.");
+        pager.innerHTML = "";
+        return;
+      }
+      list.innerHTML = `<table>
+        <thead><tr><th>Address</th><th>Channel</th><th>Reason</th><th>Detail</th><th>Added</th><th></th></tr></thead>
+        <tbody>${items.map(x => `<tr>
+          <td class="mono">${esc(x.address)}</td>
+          <td>${badge(chLabel(x.channel))}</td>
+          <td><span class="badge ${REASON_COLOR[x.reason] ?? ""}">${esc(x.reason)}</span></td>
+          <td class="muted" style="max-width:300px;white-space:normal">${esc(x.detail || "—")}</td>
+          <td class="muted">${esc(fmtDate(x.created_at))}</td>
+          <td style="text-align:right"><button class="btn sm danger" data-del="${esc(x.id)}">Remove</button></td></tr>`).join("")}</tbody></table>`;
+      list.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
+        if (!confirm("Remove this address from the list? Messages to it will be sent again.")) return;
+        try { await api(`/suppressions/${b.dataset.del}`, { method: "DELETE" }); toast("Removed", "ok"); load(); }
+        catch (err) { toast(err.message, "err"); }
+      }));
+      pager.innerHTML = pagerHtml(offset, items.length, PAGE);
+      pager.querySelector("[data-prev]").onclick = () => { offset = Math.max(0, offset - PAGE); load(); };
+      pager.querySelector("[data-next]").onclick = () => { offset += PAGE; load(); };
+    } catch (err) { list.innerHTML = emptyState("Couldn't load the suppression list", err.message); }
+  }
+  $("#add-btn", el).addEventListener("click", () => {
+    openModal("Suppress an address", `
+      <div class="row">
+        <div class="field"><label>Channel</label><select name="channel"><option value="email">email</option><option value="sms">sms</option></select></div>
+        <div class="field" style="flex:2"><label>Address or number</label><input name="address" required placeholder="someone@example.com or +15551234567" spellcheck="false"></div>
+      </div>
+      <div class="field"><label>Note (optional)</label><input name="detail" maxlength="500" placeholder="Why this address is blocked"></div>`, {
+      submitLabel: "Suppress",
+      onSubmit: async fd => {
+        await api("/suppressions", { method: "POST", body: JSON.stringify({
+          channel: fd.get("channel"), address: fd.get("address").trim(), detail: fd.get("detail") || null }) });
+        toast("Address suppressed", "ok"); offset = 0; load();
+      },
+    });
+  });
+  load();
+}
+
+/* ═══ Audit log ═══════════════════════════════════════════ */
+
+function renderAuditLog(el) {
+  el.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div><div class="card-title">Audit log</div>
+        <div class="card-sub">Every change to workflows, templates, providers, API keys, team members and suppressions. Request contents are never stored.</div></div>
+        <select id="audit-type" title="Filter by kind of resource">
+          <option value="">All resources</option>
+          ${["workflow", "template", "provider", "api_key", "member", "suppression"].map(t => `<option value="${t}">${t.replace("_", " ")}</option>`).join("")}
+        </select>
+      </div>
+      <div class="card-body flush table-wrap" id="audit-list">${emptyState("Loading…", "")}</div>
+      <div class="card-body toolbar" id="audit-pager" style="justify-content:space-between"></div>
+    </div>`;
+  const PAGE = 25;
+  let offset = 0;
+  async function load() {
+    const list = $("#audit-list", el), pager = $("#audit-pager", el);
+    const type = $("#audit-type", el).value;
+    try {
+      const items = await api(`/audit-log?limit=${PAGE}&offset=${offset}${type ? `&resource_type=${type}` : ""}`);
+      if (items.length === 0 && offset === 0) {
+        list.innerHTML = emptyState("Nothing recorded", "Changes made from now on will show up here.");
+        pager.innerHTML = "";
+        return;
+      }
+      list.innerHTML = `<table>
+        <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Resource</th></tr></thead>
+        <tbody>${items.map(e => `<tr>
+          <td class="muted">${esc(fmtDate(e.created_at))}</td>
+          <td>${e.actor_label ? esc(e.actor_label) : `<span class="muted">${esc(e.actor_type.replace("_", " "))}</span> ${shortId(e.actor_id)}`}</td>
+          <td><span class="mono">${esc(e.action)}</span></td>
+          <td>${shortId(e.resource_id)}</td></tr>`).join("")}</tbody></table>`;
+      pager.innerHTML = pagerHtml(offset, items.length, PAGE);
+      pager.querySelector("[data-prev]").onclick = () => { offset = Math.max(0, offset - PAGE); load(); };
+      pager.querySelector("[data-next]").onclick = () => { offset += PAGE; load(); };
+    } catch (err) { list.innerHTML = emptyState("Couldn't load the audit log", err.message); }
+  }
+  $("#audit-type", el).addEventListener("change", () => { offset = 0; load(); });
+  load();
 }
 
 /* ═══ Devices ═════════════════════════════════════════════ */

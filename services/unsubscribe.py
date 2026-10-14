@@ -16,6 +16,7 @@ from domain.enums import ChannelType
 from domain.value_objects.ids import InvalidIdError, TenantId
 
 PATH = "/api/v1/unsubscribe"
+PREFERENCES_PATH = "/api/v1/preference-center"
 
 
 def _b64(raw: bytes) -> str:
@@ -68,7 +69,15 @@ class UnsubscribeLinks:
         token = self.token(tenant_id, channel, address, category=category, recipient_ref=recipient_ref)
         return f"{self._public_url}{PATH}?token={token}"
 
-    def verify(self, token: str) -> UnsubscribeTarget | None:
+    def preferences_url_for(self, tenant_id: TenantId, recipient_ref: str) -> str | None:
+        """Link to the hosted preference center for one recipient."""
+        if not self.enabled or not recipient_ref:
+            return None
+        payload = {"t": str(tenant_id), "r": recipient_ref, "p": 1}
+        body = _b64(json.dumps(payload, separators=(",", ":")).encode())
+        return f"{self._public_url}{PREFERENCES_PATH}?token={body}.{self._sign(body)}"
+
+    def _open(self, token: str) -> dict | None:
         if not self.enabled:
             return None
         try:
@@ -76,6 +85,27 @@ class UnsubscribeLinks:
             if not hmac.compare_digest(sig, self._sign(body)):
                 return None
             data = json.loads(_unb64(body))
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
+
+    def verify_preferences(self, token: str) -> tuple[TenantId, str] | None:
+        """(tenant, recipient external_ref) from a preference-center token, or None."""
+        data = self._open(token)
+        try:
+            if data is None or data.get("p") != 1 or "c" in data:
+                return None
+            return TenantId.from_str(data["t"]), str(data["r"])
+        except (KeyError, InvalidIdError):
+            return None
+
+    def verify(self, token: str) -> UnsubscribeTarget | None:
+        if not self.enabled:
+            return None
+        try:
+            data = self._open(token)
+            if data is None or data.get("p"):      # preference-center tokens are not unsubscribe tokens
+                return None
             return UnsubscribeTarget(
                 TenantId.from_str(data["t"]), ChannelType(data["c"]), str(data["a"]),
                 category=data.get("k"), recipient_ref=data.get("r"),

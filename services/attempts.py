@@ -46,6 +46,9 @@ def build_attempt(
     ) if rendering.unsubscribe else None
     if link:
         extra = {"unsubscribe_url": link, **(extra or {})}
+    prefs_link = rendering.unsubscribe.preferences_url_for(notification.tenant_id, recipient.external_ref) if rendering.unsubscribe else None
+    if prefs_link:
+        extra = {"preferences_url": prefs_link, **(extra or {})}
     rendered = rendering.render(
         body=template.body,
         subject=template.subject,

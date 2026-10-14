@@ -21,7 +21,7 @@
 | B2 | Email: SES / Resend / SendGrid driver ✅ | High | M | SMTP is fire-and-forget; API drivers give bounce/delivery webhooks. |
 | B3 | Push: APNs (HTTP/2, `.p8` token) | Medium | M | FCM exists. |
 | B4 | Provider secrets handling ✅ | High | M | DB `providers.config` holds non-secret values only; add encrypted secret storage or a secret-manager reference. |
-| B5 | Bounce/complaint suppression list ✅ | Medium | M | Stop sending to hard-bounced addresses and unsubscribed numbers. Console page and the unsubscribe link (E5) still to do. |
+| B5 | Bounce/complaint suppression list ✅ | Medium | M | Stop sending to hard-bounced addresses and unsubscribed numbers. Console page and unsubscribe link shipped. |
 
 ## Phase C — Security & Multi-Tenant Safety
 
@@ -31,7 +31,7 @@
 | C2 | Sentinel client: replace the stub ✅ | High | M | `clients/sentinel_client.py` is in-memory; wire the real user/tenant lookup with caching and timeouts. |
 | C3 | Tenant isolation tests ✅ | High | S | Assert every repository query and API route is tenant-scoped (cross-tenant read/write attempts return 404). |
 | C4 | API key rotation & scopes ✅ | Medium | M | Expiry, last-used tracking, revocation, read-only vs ingest scopes. |
-| C5 | Audit log ✅ | Medium | M | Who changed workflows, templates, providers, API keys. `GET /api/v1/audit-log` (admin); console page still to do. |
+| C5 | Audit log ✅ | Medium | M | Who changed workflows, templates, providers, API keys. `GET /api/v1/audit-log` (admin) and a console page. |
 
 ## Phase D — Observability
 
@@ -56,7 +56,7 @@
 | E3b | Digest extras: rolling windows, daily-at-9am schedule, per-channel digests | Low | M | Today the window is fixed from the first event and covers every channel of the workflow. |
 | E4 | Template versioning & preview ✅ | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
 | E4b | Template diff view and per-version usage ✅ | Low | S | Show a text diff between versions in the console; record which version each message was rendered from. |
-| E5 | Subscriber preference center ✅ | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. Shipped: `{{ unsubscribe_url }}` + `/api/v1/unsubscribe`, workflow `category`, `/api/v1/category-preferences`. A hosted preference-center page and console UI for categories are not built. |
+| E5 | Subscriber preference center ✅ | Medium | M | Per-category opt-out and the unsubscribe link/endpoint that B5 needs. Shipped: `{{ unsubscribe_url }}` + `/api/v1/unsubscribe`, workflow `category`, `/api/v1/category-preferences`. Also shipped: hosted preference center (`{{ preferences_url }}`) and console pages for categories, suppressions and the audit log. |
 | E6 | Chat channels (Slack/Teams webhook) | Low | M | New `Channel` enum value plus worker. |
 
 ## Phase F — Console UI & DX

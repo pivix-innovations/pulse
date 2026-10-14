@@ -220,7 +220,7 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
 - **Signed delivery webhooks:** vendors call back with delivered/bounced/failed. Pulse verifies each vendor's
   signature (Twilio, Resend, SendGrid, SES via SNS) so callbacks cannot be forged.
 - **Acknowledgements:** client apps can ack a message, e.g. when a push was shown.
-- **Suppression list (`/api/v1/suppressions`):** a permanent bounce, a spam complaint (SES, Resend, SendGrid), an
+- **Suppression list (`/api/v1/suppressions`; console: Configure → Suppressions):** a permanent bounce, a spam complaint (SES, Resend, SendGrid), an
   unsubscribe or a Twilio STOP reply (error 21610) adds the email address or phone number to the tenant's suppression
   list. Later sends to that address on that channel are skipped, whichever recipient or workflow they come from; other
   channels still go out. Admins can also add or remove entries by hand. Addresses are matched case-insensitively
@@ -231,6 +231,9 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
     choice beats an "all channels" one, and `DELETE` forgets a choice. Workflows without a category (password resets,
     receipts) are never filtered this way. When a workflow has a category, `{{ unsubscribe_url }}` becomes a "stop this
     category" link for that recipient and channel instead of blocking the address.
+  - **Preference center:** `{{ preferences_url }}` in any template is a signed link (no login) to a hosted page
+    listing the tenant's categories as checkboxes; saving turns each category on or off across all channels.
+    Needs the same `PULSE_SECURITY__UNSUBSCRIBE_KEY` and `PULSE_API__PUBLIC_URL` as unsubscribe links.
   - **One send policy:** channel opt-outs, category opt-outs and the suppression list are checked in one place and
     apply to first sends, digests, sequence steps and fallback escalations alike (a skipped sequence step records
     why). `pulse.category_optouts` counts category skips.
@@ -260,7 +263,7 @@ escalates to the fallback channel. "Push only if they did not see it" requires n
 - **Useful when:** you are a platform serving multiple customers, or an organisation with several product teams that
   must not see each other's data.
 
-- **Audit log (`GET /api/v1/audit-log`, admin):** every successful create, update, delete, publish, rollback or rotate
+- **Audit log (`GET /api/v1/audit-log`, admin; console: Access → Audit Log):** every successful create, update, delete, publish, rollback or rotate
   on workflows, templates, providers, API keys, members and suppressions is recorded with who did it (console user
   email, or API key id), the resource id and a timestamp. Filter by `resource_type` / `resource_id`. Entries hold ids
   only, never request bodies, so secrets cannot end up in the log. A failure to write an entry never fails the change.
@@ -298,8 +301,6 @@ Planned, but **not** available today (see [todo.md](todo.md) and [backlog.md](ba
 | H5 | Rich push options (sounds, badges, priority, TTL) |
 | H6 | Apple Push Notification service (APNs) driver |
 | H8 | Short-lived tokens for the SSE stream |
-| D1 | Distributed tracing across API, relay, worker and webhook |
-| E5 | Self-service preference centre and unsubscribe portal |
 | E6 | Chat channels (Slack, Teams, Discord) |
 
 Also note: there is no chat/Slack channel and no iOS-native push yet, and only Twilio is supported for SMS.
