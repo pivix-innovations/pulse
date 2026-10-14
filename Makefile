@@ -28,6 +28,10 @@ migrate: ## Apply database migrations
 revision: ## Create a new migration: make revision m="add foo"
 	$(UV) alembic revision --autogenerate -m "$(m)"
 
+.PHONY: o2-apply
+o2-apply: ## Create/update the OpenObserve alert rules and dashboard (see docs/observability.md)
+	$(UV) python -m scripts.apply_openobserve
+
 .PHONY: seed-admin
 seed-admin: ## Bootstrap the first platform admin + tenant (idempotent)
 	$(UV) python -m scripts.seed_admin $(if $(email),$(email)) $(if $(password),$(password)) $(if $(tenant),$(tenant))

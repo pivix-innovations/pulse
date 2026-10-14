@@ -1,0 +1,92 @@
+{
+  "alerts": [
+    {
+      "name": "pulse_relay_behind",
+      "title": "Relay is behind",
+      "description": "The outbox relay is not keeping up: the oldest pending outbox row is over a minute old.",
+      "stream_name": "pulse_outbox_oldest_age",
+      "promql": "max(pulse_outbox_oldest_age)",
+      "operator": ">",
+      "value": 60,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    },
+    {
+      "name": "pulse_work_stuck",
+      "title": "Work is stuck",
+      "description": "Attempts are pending/retrying with nobody working them; the reconciliation sweep should have cleared them.",
+      "stream_name": "pulse_attempts_stuck",
+      "promql": "max(pulse_attempts_stuck)",
+      "operator": ">",
+      "value": 0,
+      "period_minutes": 10,
+      "silence_minutes": 20
+    },
+    {
+      "name": "pulse_queue_backing_up",
+      "title": "Queue backing up",
+      "description": "A worker queue has over 1000 waiting jobs.",
+      "stream_name": "pulse_queue_depth",
+      "promql": "max by (queue) (pulse_queue_depth)",
+      "operator": ">",
+      "value": 1000,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    },
+    {
+      "name": "pulse_dead_letters_rising",
+      "title": "Dead letters rising",
+      "description": "More than 10 attempts were dead-lettered in 15 minutes.",
+      "stream_name": "pulse_dead_letters_total",
+      "promql": "increase(pulse_dead_letters_total[15m])",
+      "operator": ">",
+      "value": 10,
+      "period_minutes": 15,
+      "silence_minutes": 30
+    },
+    {
+      "name": "pulse_provider_failing",
+      "title": "Provider failing",
+      "description": "Over 20% of a provider's calls are failing with provider errors.",
+      "stream_name": "pulse_provider_calls",
+      "promql": "sum by (provider) (rate(pulse_provider_calls{outcome=\"provider_error\"}[5m])) / sum by (provider) (rate(pulse_provider_calls[5m]))",
+      "operator": ">",
+      "value": 0.2,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    },
+    {
+      "name": "pulse_provider_slow",
+      "title": "Provider slow",
+      "description": "A provider's p95 latency is over 5 seconds.",
+      "stream_name": "pulse_provider_duration_bucket",
+      "promql": "histogram_quantile(0.95, sum by (provider, le) (rate(pulse_provider_duration_bucket[5m])))",
+      "operator": ">",
+      "value": 5000,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    },
+    {
+      "name": "pulse_api_errors",
+      "title": "API errors",
+      "description": "The API is returning 5xx responses.",
+      "stream_name": "pulse_http_server_duration_count",
+      "promql": "sum(rate(pulse_http_server_duration_count{status_class=\"5xx\"}[5m]))",
+      "operator": ">",
+      "value": 0.1,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    },
+    {
+      "name": "pulse_scheduler_silent",
+      "title": "Scheduler silent",
+      "description": "No state gauges are arriving, so the scheduler (outbox relay, sweeps) is probably down.",
+      "stream_name": "pulse_outbox_pending",
+      "promql": "absent(pulse_outbox_pending)",
+      "operator": ">",
+      "value": 0,
+      "period_minutes": 5,
+      "silence_minutes": 10
+    }
+  ]
+}

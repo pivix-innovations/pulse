@@ -54,11 +54,27 @@ so each series has one writer. Names appear in OpenObserve with dots as undersco
 | Relay is behind | `max(pulse_outbox_oldest_age)` | > 60 for 5 min |
 | Work is stuck | `max(pulse_attempts_stuck)` | > 0 for 10 min (the sweep should clear it) |
 | Queue backing up | `max by (queue) (pulse_queue_depth)` | > 1000 for 5 min |
-| Dead letters rising | `increase(pulse_dead_letters[15m])` | > 10 |
+| Dead letters rising | `increase(pulse_dead_letters_total[15m])` | > 10 |
 | Provider failing | `sum by (provider) (rate(pulse_provider_calls{outcome="provider_error"}[5m])) / sum by (provider) (rate(pulse_provider_calls[5m]))` | > 0.2 |
 | Provider slow | `histogram_quantile(0.95, sum by (provider, le) (rate(pulse_provider_duration_bucket[5m])))` | > 5000 |
 | API errors | `sum(rate(pulse_http_server_duration_count{status_class="5xx"}[5m]))` | > 0.1 |
 | Scheduler silent | `absent(pulse_outbox_pending)` | for 5 min (no gauges means the scheduler is down) |
+
+### Alerts and dashboard as code
+
+The eight rules above and an overview dashboard ship as JSON in `ops/openobserve/` (`alerts.json`, `dashboard.json`).
+Apply them with:
+
+```bash
+PULSE_ALERT_WEBHOOK_URL=https://hooks.example.com/... make o2-apply     # or: uv run python -m scripts.apply_openobserve
+```
+
+The script is idempotent (re-run it after editing the JSON and rules/dashboards are updated in place), supports
+`--dry-run`, `--destination NAME` (use an existing OpenObserve destination) and `--no-alerts` / `--no-dashboard`.
+It reads `PULSE_O2_URL`, `PULSE_O2_ORG`, `PULSE_O2_EMAIL`, `PULSE_O2_PASSWORD` (defaults match the dev compose file).
+Notes: OpenObserve rejects localhost/private destination URLs, so the webhook must be a public address (Slack, PagerDuty,
+etc.); and a rule can only be created once its metric has reported at least once, so rules whose stream is still
+empty are skipped with a message: re-run after Pulse has been running for a minute.
 
 ## Notes
 

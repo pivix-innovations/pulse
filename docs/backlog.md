@@ -41,7 +41,7 @@
 | D2 | Metrics & alerts (OpenTelemetry → OpenObserve) ✅ | High | M | Outbox lag, queue depth, stuck attempts, dead-letter rate, per-provider error rate and latency. OTLP export, so D1 tracing reuses it; see [observability.md](observability.md). |
 | D3 | Structured log correlation ✅ | Medium | S | Carry `notification_id`, `tenant_id` and `attempt_id` on every log line. Done for ingest, delivery and receipt webhooks (`telemetry/log_context.py`); format follows `PULSE_LOGGING__JSON` (JSON by default). |
 | D4 | Runbook | Low | S | Dead-letter replay, stuck-outbox recovery, provider failover. |
-| D5 | OpenObserve alerts & dashboards as code | Medium | S | Ship the eight alert rules from [observability.md](observability.md) and an overview dashboard as importable JSON, plus a script that applies them through the OpenObserve API. |
+| D5 | OpenObserve alerts & dashboards as code ✅ | Medium | S | Ship the eight alert rules from [observability.md](observability.md) and an overview dashboard as importable JSON, plus a script that applies them through the OpenObserve API. |
 | D6 | Ship logs to OpenObserve (OTLP logs) | Medium | S | Same pipeline as metrics; pairs with D3 so every line carries `notification_id`/`tenant_id`. |
 
 ## Phase E — Product Features (market parity)
