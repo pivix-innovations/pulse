@@ -14,6 +14,7 @@ from domain.value_objects.ids import (
     NotificationId,
     ProviderId,
     RecipientId,
+    TemplateId,
     TenantId,
 )
 
@@ -38,6 +39,8 @@ def _to_entity(row: DeliveryAttemptModel) -> DeliveryAttempt:
         dispatch_started_at=row.dispatch_started_at,
         expects_confirmation=row.expects_confirmation,
         provider_message_id=row.provider_message_id,
+        template_id=TemplateId(row.template_id) if row.template_id else None,
+        template_version=row.template_version,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -66,6 +69,8 @@ class PostgresDeliveryAttemptRepository:
                 next_retry_at=a.next_retry_at,
                 expects_confirmation=a.expects_confirmation,
                 provider_message_id=a.provider_message_id,
+                template_id=a.template_id.value if a.template_id else None,
+                template_version=a.template_version,
             )
             for a in attempts
         )
@@ -228,3 +233,23 @@ class PostgresDeliveryAttemptRepository:
         row.expects_confirmation = attempt.expects_confirmation
         row.provider_message_id = attempt.provider_message_id
         await self._session.flush()
+
+    async def template_usage(
+        self, tenant_id: TenantId, template_id: TemplateId
+    ) -> list[tuple[int, int, datetime]]:
+        """(version, messages rendered from it, most recent) for each version, newest version first."""
+        stmt = (
+            select(
+                DeliveryAttemptModel.template_version,
+                func.count(),
+                func.max(DeliveryAttemptModel.created_at),
+            )
+            .where(
+                DeliveryAttemptModel.tenant_id == tenant_id.value,
+                DeliveryAttemptModel.template_id == template_id.value,
+                DeliveryAttemptModel.template_version.is_not(None),
+            )
+            .group_by(DeliveryAttemptModel.template_version)
+            .order_by(DeliveryAttemptModel.template_version.desc())
+        )
+        return [(v, n, last) for v, n, last in (await self._session.execute(stmt)).all()]

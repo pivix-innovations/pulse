@@ -84,7 +84,8 @@ async def resolve(
     if version is None:  # pragma: no cover - published_version always points at a stored version
         raise TemplateUnavailable(f"Template '{template.template}' lost its published version")
     return ChannelTemplate(
-        channel=template.channel, subject=version.subject, body=version.body, format=version.format
+        channel=template.channel, subject=version.subject, body=version.body, format=version.format,
+        template_id=str(chosen.id), template_version=version.version,
     )
 
 

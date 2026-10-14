@@ -81,6 +81,10 @@ class DeliveryAttemptRepository(Protocol):
 
     async def add_many(self, attempts: Sequence[DeliveryAttempt]) -> None: ...
 
+    async def template_usage(
+        self, tenant_id: TenantId, template_id: TemplateId
+    ) -> list[tuple[int, int, datetime]]: ...
+
     async def get_by_provider_message_id(
         self,
         tenant_id: TenantId,

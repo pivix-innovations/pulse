@@ -1179,25 +1179,45 @@ function openTemplatePreview(t) {
 
 /* History: every version, what is live, and one-click rollback. */
 async function openTemplateHistory(t, reload) {
-  let versions;
-  try { versions = await api(`/templates/${t.id}/versions`); }
+  let versions, usage;
+  try { [versions, usage] = await Promise.all([api(`/templates/${t.id}/versions`), api(`/templates/${t.id}/usage`)]); }
   catch (err) { toast(err.message, "err"); return; }
+  const used = Object.fromEntries(usage.map(u => [u.version, u]));
   openModal(`History · ${t.name}`, versions.length === 0
     ? emptyState("Nothing published yet", "Publish the draft to create version 1.")
-    : `<div class="table-wrap"><table><thead><tr><th>Version</th><th>When</th><th>Note</th><th></th></tr></thead><tbody>
+    : `<div class="table-wrap"><table><thead><tr><th>Version</th><th>When</th><th>Note</th><th>Messages sent</th><th></th></tr></thead><tbody>
       ${versions.map(v => `<tr>
         <td style="font-weight:600">v${v.version} ${v.is_published ? badge("live") : ""}</td>
         <td class="muted">${esc(fmtDate(v.created_at))}</td>
         <td class="muted">${esc(v.note || "—")}</td>
+        <td class="muted" title="${used[v.version] ? "Last used " + esc(fmtDate(used[v.version].last_used_at)) : ""}">${used[v.version] ? used[v.version].messages : 0}</td>
         <td style="text-align:right;white-space:nowrap">
           <button type="button" class="btn sm" data-view="${v.version}">View</button>
+          ${v.version > 1 ? `<button type="button" class="btn sm" data-diff="${v.version}">Changes</button>` : ""}
           ${v.is_published ? "" : `<button type="button" class="btn sm" data-rollback="${v.version}">Roll back to this</button>`}
         </td></tr>`).join("")}</tbody></table></div>
+      <div id="hv-diff" style="margin-top:12px"></div>
       <pre id="hv-body" style="white-space:pre-wrap;margin-top:12px"></pre>`,
     { submitLabel: "Close", onSubmit: async () => {}, width: "720px" });
   const root = $("#modal-root");
+  const diffLines = (title, lines) => lines.length ? `<div class="muted" style="margin-top:8px">${esc(title)}</div><pre style="margin:4px 0;white-space:pre-wrap">${
+    lines.map(l => {
+      const c = l.startsWith("+") ? "var(--green);background:var(--green-bg)" : l.startsWith("-") ? "var(--red);background:var(--red-bg)" : "var(--muted)";
+      return `<div style="color:${c}">${esc(l) || "&nbsp;"}</div>`;
+    }).join("")}</pre>` : "";
+  root.querySelectorAll("[data-diff]").forEach(b => b.addEventListener("click", async () => {
+    const n = +b.dataset.diff;
+    try {
+      const d = await api(`/templates/${t.id}/diff?from=${n - 1}&to=${n}`);
+      $("#hv-body", root).textContent = "";
+      $("#hv-diff", root).innerHTML = `<b>v${n - 1} → v${n}</b>` + (d.changed
+        ? diffLines("Subject", d.subject_diff) + diffLines("Body", d.body_diff)
+        : `<div class="muted">No difference in subject or body.</div>`);
+    } catch (err) { toast(err.message, "err"); }
+  }));
   root.querySelectorAll("[data-view]").forEach(b => b.addEventListener("click", () => {
     const v = versions.find(x => x.version === +b.dataset.view);
+    $("#hv-diff", root).innerHTML = "";
     $("#hv-body", root).textContent = (v.subject ? `Subject: ${v.subject}\n\n` : "") + v.body;
   }));
   root.querySelectorAll("[data-rollback]").forEach(b => b.addEventListener("click", async () => {

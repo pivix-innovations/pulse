@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import difflib
 import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_uow, require_scope
@@ -53,6 +54,29 @@ class VersionOut(BaseModel):
     note: str | None
     is_published: bool
     created_at: datetime | None
+
+
+class DiffSide(BaseModel):
+    label: str          # "v3" or "draft"
+    subject: str | None
+    body: str
+
+
+class DiffOut(BaseModel):
+    """Line diffs (unified format, no file headers) between two versions, or a version and the draft."""
+
+    from_: DiffSide = Field(serialization_alias="from")
+    to: DiffSide
+    subject_diff: list[str]
+    body_diff: list[str]
+    changed: bool
+
+
+class VersionUsageOut(BaseModel):
+    version: int
+    messages: int
+    last_used_at: datetime | None
+    is_published: bool
 
 
 class PublishIn(BaseModel):
@@ -236,6 +260,54 @@ async def get_version(
     if found is None:
         raise HTTPException(status_code=404, detail="Version not found")
     return _version_out(found, template.published_version)
+
+
+def _unified(a: str | None, b: str | None) -> list[str]:
+    lines = list(difflib.unified_diff((a or "").splitlines(), (b or "").splitlines(), lineterm="", n=2))
+    return [ln for ln in lines if not ln.startswith(("---", "+++"))]
+
+
+@router.get("/{template_id}/diff", response_model=DiffOut, response_model_by_alias=True)
+async def diff_versions(
+    template_id: uuid.UUID,
+    from_: str = Query(alias="from", description="A version number"),
+    to: str = Query(default="draft", description="A version number, or 'draft'"),
+    tenant_id: TenantId = Depends(require_scope("read")),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+) -> DiffOut:
+    """What changed between two versions (or a version and the current draft)."""
+    async with uow:
+        template = await _load(uow, tenant_id, template_id)
+
+        async def side(ref: str) -> DiffSide:
+            if ref == "draft":
+                return DiffSide(label="draft", subject=template.subject, body=template.body)
+            if not ref.isdigit():
+                raise HTTPException(status_code=422, detail="Use a version number or 'draft'")
+            found = await uow.templates.get_version(tenant_id, template.id, int(ref))
+            if found is None:
+                raise HTTPException(status_code=404, detail=f"Version {ref} not found")
+            return DiffSide(label=f"v{found.version}", subject=found.subject, body=found.body)
+
+        a, b = await side(from_), await side(to)
+    subject_diff, body_diff = _unified(a.subject, b.subject), _unified(a.body, b.body)
+    return DiffOut(from_=a, to=b, subject_diff=subject_diff, body_diff=body_diff, changed=bool(subject_diff or body_diff))
+
+
+@router.get("/{template_id}/usage", response_model=list[VersionUsageOut])
+async def version_usage(
+    template_id: uuid.UUID,
+    tenant_id: TenantId = Depends(require_scope("read")),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+) -> list[VersionUsageOut]:
+    """How many messages each version has been used to render, newest version first."""
+    async with uow:
+        template = await _load(uow, tenant_id, template_id)
+        rows = await uow.delivery_attempts.template_usage(tenant_id, template.id)
+    return [
+        VersionUsageOut(version=v, messages=n, last_used_at=last, is_published=v == template.published_version)
+        for v, n, last in rows
+    ]
 
 
 @router.post("/{template_id}/publish", response_model=TemplateOut)

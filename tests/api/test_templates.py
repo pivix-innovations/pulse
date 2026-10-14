@@ -227,3 +227,42 @@ async def test_writing_templates_needs_admin_but_reading_and_previewing_need_onl
     assert (await world.client.post(f"{T}/{t['id']}/publish", headers=rh)).status_code == 403
     assert (await world.client.post(f"{T}/{t['id']}/rollback", headers=rh, json={"version": 1})).status_code == 403
     assert (await world.client.post(f"{T}/preview", headers=rh, json={"body": "x"})).status_code == 403
+
+
+async def test_diff_between_versions_and_the_draft(world):
+    t = await create(world, publish=True, subject="Hello", body="line one\nline two")
+    await world.client.put(f"{T}/{t['id']}", headers=H(world), json=put_body(t, subject="Hello!", body="line one\nline 2\nline three"))
+    await world.client.post(f"{T}/{t['id']}/publish", headers=H(world), json={})
+
+    d = (await world.client.get(f"{T}/{t['id']}/diff", params={"from": "1", "to": "2"}, headers=H(world))).json()
+    assert d["from"]["label"] == "v1" and d["to"]["label"] == "v2" and d["changed"] is True
+    assert "-line two" in d["body_diff"] and "+line 2" in d["body_diff"] and "+line three" in d["body_diff"]
+    assert "-Hello" in d["subject_diff"] and "+Hello!" in d["subject_diff"]
+    assert not any(line.startswith(("---", "+++")) for line in d["body_diff"])
+
+    same = (await world.client.get(f"{T}/{t['id']}/diff", params={"from": "2"}, headers=H(world))).json()   # v2 vs draft
+    assert same["to"]["label"] == "draft" and same["changed"] is False
+
+    assert (await world.client.get(f"{T}/{t['id']}/diff", params={"from": "9"}, headers=H(world))).status_code == 404
+    assert (await world.client.get(f"{T}/{t['id']}/diff", params={"from": "x"}, headers=H(world))).status_code == 422
+
+
+async def test_each_message_records_its_template_version_and_usage_counts_them(world):
+    t = await create(world, publish=True, body="v1 text")
+    await world.client.post("/api/v1/workflows", headers=H(world),
+                            json=wf({"channels": [{"channel": "email", "template": "welcome"}]}, "user.signup", "w"))
+    await world.client.post("/api/v1/events", headers=H(world),
+                            json={"event_type": "user.signup", "source": "t", "idempotency_key": "e1"})
+    await world.client.put(f"{T}/{t['id']}", headers=H(world), json=put_body(t, body="v2 text"))
+    await world.client.post(f"{T}/{t['id']}/publish", headers=H(world), json={})
+    nids = []
+    for key in ("e2", "e3"):
+        r = await world.client.post("/api/v1/events", headers=H(world),
+                                    json={"event_type": "user.signup", "source": "t", "idempotency_key": key})
+        nids.append(r.json()["notification_id"])
+
+    usage = (await world.client.get(f"{T}/{t['id']}/usage", headers=H(world))).json()
+    assert [(u["version"], u["messages"], u["is_published"]) for u in usage] == [(2, 2, True), (1, 1, False)]
+
+    detail = (await world.client.get(f"/api/v1/notifications/{nids[0]}", headers=H(world))).json()
+    assert detail["attempts"][0]["template_version"] == 2 and detail["attempts"][0]["template_id"] == t["id"]

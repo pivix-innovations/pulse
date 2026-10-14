@@ -114,6 +114,8 @@ async def get_notification(
                 provider_id=a.provider_id.value if a.provider_id else None,
                 provider_message_id=a.provider_message_id,
                 awaiting_confirmation=a.status is DeliveryStatus.SENT and a.expects_confirmation,
+                template_id=a.template_id.value if a.template_id else None,
+                template_version=a.template_version,
             )
             for a in attempts
         ],

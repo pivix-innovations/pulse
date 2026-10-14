@@ -38,6 +38,8 @@ class DeliveryAttemptOut(BaseModel):
     provider_id: uuid.UUID | None = None
     provider_message_id: str | None = None
     awaiting_confirmation: bool = False
+    template_id: uuid.UUID | None = None
+    template_version: int | None = None
 
 
 class StepRunOut(BaseModel):

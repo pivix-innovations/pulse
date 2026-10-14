@@ -10,6 +10,7 @@ from domain.value_objects.ids import (
     NotificationId,
     ProviderId,
     RecipientId,
+    TemplateId,
     TenantId,
 )
 
@@ -56,6 +57,9 @@ class DeliveryAttempt:
     # The provider's own id for the accepted message; how delivery receipts
     # (webhooks) find this attempt again.
     provider_message_id: str | None = None
+    # The saved template (and its version) this message was rendered from; None for inline templates.
+    template_id: TemplateId | None = None
+    template_version: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

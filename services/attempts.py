@@ -9,7 +9,7 @@ from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
 from domain.entities.recipient import Recipient
 from domain.enums import ChannelType
-from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId
+from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId, TemplateId
 from services.ports.uow import UnitOfWork
 from services.templates import resolve
 from telemetry.metrics import get_metrics
@@ -61,6 +61,8 @@ def build_attempt(
         subject=rendered.subject,
         body=rendered.text,
         body_html=rendered.html,
+        template_id=TemplateId.from_str(template.template_id) if template.template_id else None,
+        template_version=template.template_version,
     )
 
 

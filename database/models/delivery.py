@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     true,
 )
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -56,6 +57,8 @@ class DeliveryAttemptModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixi
     )
 
     provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (
         Index("ix_delivery_attempts_provider_message_id", "tenant_id", "provider_message_id"),
@@ -70,4 +73,8 @@ class DeliveryAttemptModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixi
         # For the reconciliation sweep: stuck-in-sent lookups per channel.
         Index("ix_delivery_attempts_status_channel_sent_at", "status", "channel", "sent_at"),
         Index("ix_delivery_attempts_tenant_notification", "tenant_id", "notification_id"),
+        Index(
+            "ix_delivery_attempts_template", "tenant_id", "template_id", "template_version",
+            postgresql_where=text("template_id IS NOT NULL"),
+        ),
     )

@@ -106,6 +106,16 @@ class InMemoryDeliveryAttemptRepository:
     def __init__(self) -> None:
         self.items: dict[str, DeliveryAttempt] = {}
 
+    async def template_usage(self, tenant_id, template_id):
+        stats: dict[int, list] = {}
+        for a in self.items.values():
+            if a.tenant_id == tenant_id and a.template_id == template_id and a.template_version is not None:
+                row = stats.setdefault(a.template_version, [0, a.created_at])
+                row[0] += 1
+                if a.created_at and (row[1] is None or a.created_at > row[1]):
+                    row[1] = a.created_at
+        return [(v, n, last) for v, (n, last) in sorted(stats.items(), reverse=True)]
+
     async def add_many(self, attempts: Sequence[DeliveryAttempt]) -> None:
         for a in attempts:
             self.items[str(a.id)] = a

@@ -19,6 +19,9 @@ class ChannelTemplate:
     subject: str | None = None
     format: TemplateFormat = TemplateFormat.MARKDOWN
     template: str | None = None
+    # Set by services.templates.resolve: which stored template/version this was rendered from.
+    template_id: str | None = None
+    template_version: int | None = None
 
 
 def decode_channel_template(item: dict) -> ChannelTemplate:

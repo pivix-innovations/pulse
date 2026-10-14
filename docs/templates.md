@@ -65,3 +65,14 @@ POST /api/v1/templates/{id}/preview
 
 Templates that existed before versioning become **version 1, published**, so nothing changes for anyone. Before this
 feature nothing sent saved templates (workflows used inline text only), so existing deployments are unaffected.
+
+## Comparing versions and seeing what was sent
+
+- **Diff:** `GET /api/v1/templates/{id}/diff?from=1&to=2` returns line diffs of the subject and body (`to` defaults to the
+  current draft; `from`/`to` accept a version number or `draft`). In the console, **History → Changes** shows what a
+  version changed from the one before it.
+- **Usage:** every message built from a saved template records the template and version it used
+  (`template_id`, `template_version` on each delivery attempt, shown in `GET /notifications/{id}`).
+  `GET /api/v1/templates/{id}/usage` counts messages per version, and the History table shows the same count, so
+  you can see whether anything still goes out on an old version after a rollback. Messages sent before this feature, and
+  inline (non-saved) templates, are not counted.
