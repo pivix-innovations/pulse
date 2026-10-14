@@ -11,7 +11,10 @@ from domain.entities.dead_letter import DeadLetter
 from domain.entities.delivery import DeliveryAttempt
 from domain.entities.inbox import InboxMessage
 from domain.entities.provider_call import ProviderCall
+from opentelemetry.trace import SpanKind
+
 from telemetry.log_context import bind, update_current
+from telemetry.tracing import span, traceparent
 from telemetry.metrics import get_metrics
 from domain.enums import ChannelType, DeliveryStatus
 from domain.value_objects.ids import (
@@ -98,9 +101,17 @@ class DeliveryService:
         self._retry = retry
         self._breaker = breaker
 
-    async def deliver(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> str:
-        with bind(tenant_id=tenant_id, attempt_id=attempt_id):
-            return await self._deliver(tenant_id, attempt_id)
+    async def deliver(
+        self, tenant_id: TenantId, attempt_id: DeliveryAttemptId, *, traceparent: str | None = None
+    ) -> str:
+        with bind(tenant_id=tenant_id, attempt_id=attempt_id), span(
+            "delivery.attempt", parent=traceparent, kind=SpanKind.CONSUMER,
+            attributes={"pulse.tenant_id": str(tenant_id), "pulse.attempt_id": str(attempt_id)},
+        ) as current:
+            outcome = await self._deliver(tenant_id, attempt_id)
+            if current is not None:
+                current.set_attribute("pulse.outcome", outcome)
+            return outcome
 
     async def _deliver(self, tenant_id: TenantId, attempt_id: DeliveryAttemptId) -> str:
         async with self._uow_factory() as uow:
@@ -233,9 +244,12 @@ class DeliveryService:
         for position, resolved in enumerate(chain):
             started = time.monotonic()
             try:
-                result = await asyncio.wait_for(
-                    resolved.provider.send(message), self._retry.provider_timeout_seconds
-                )
+                with span("provider.send", attributes={
+                    "pulse.provider": resolved.label, "pulse.channel": message.channel.value,
+                }):
+                    result = await asyncio.wait_for(
+                        resolved.provider.send(message), self._retry.provider_timeout_seconds
+                    )
                 record(resolved, started, "ok", None)
                 await self._note(resolved, ok=True)
                 return resolved, result, failures, calls
@@ -325,6 +339,7 @@ class DeliveryService:
                     "attempt_id": str(attempt.id),
                     "tenant_id": str(attempt.tenant_id),
                     "channel": attempt.channel.value,
+                    **({"traceparent": tp} if (tp := traceparent()) else {}),
                 },
                 job_id=f"retry:{attempt.id}:{attempt.attempt_count}",
                 defer_by_seconds=delay,

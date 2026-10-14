@@ -14,6 +14,7 @@ from domain.value_objects.ids import InvalidIdError, ProviderId
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.secrets import SecretBox, SecretsDecryptionError, SecretsNotConfigured
 from telemetry.log_context import update_current
+from telemetry.tracing import span
 from services.receipts import apply_delivery_update, suppress_attempt_address
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -83,18 +84,20 @@ async def saved_provider_webhook(
             attempt = await uow.delivery_attempts.get_by_provider_message_id(
                 provider.tenant_id, provider.id, event.provider_message_id, for_update=True
             )
-            if attempt is not None:
-                update_current(
-                    tenant_id=attempt.tenant_id, notification_id=attempt.notification_id, attempt_id=attempt.id
-                )
-            if attempt is not None and event.suppress:
-                await suppress_attempt_address(uow, attempt, event.suppress, event.reason)
-            # Unknown ids are normal (the account also sends mail Pulse doesn't
-            # know about); answer 200 so the provider doesn't disable the hook.
-            if attempt is not None and await apply_delivery_update(
-                uow, attempt, delivered=event.delivered, reason=event.reason
+            if attempt is None:
+                continue   # normal: the account also sends mail Pulse doesn't know about; answer 200 so the hook stays on
+            update_current(
+                tenant_id=attempt.tenant_id, notification_id=attempt.notification_id, attempt_id=attempt.id
+            )
+            # Continue the trace of the request that created this message.
+            with span(
+                "webhook.receipt", parent=attempt.traceparent,
+                attributes={"pulse.attempt_id": str(attempt.id), "pulse.delivered": event.delivered},
             ):
-                processed += 1
+                if event.suppress:
+                    await suppress_attempt_address(uow, attempt, event.suppress, event.reason)
+                if await apply_delivery_update(uow, attempt, delivered=event.delivered, reason=event.reason):
+                    processed += 1
         await uow.commit()
     return WebhookResult(processed=processed)
 

@@ -60,6 +60,8 @@ class DeliveryAttempt:
     # The saved template (and its version) this message was rendered from; None for inline templates.
     template_id: TemplateId | None = None
     template_version: int | None = None
+    # W3C trace context of the request that created this attempt; receipts webhooks continue that trace.
+    traceparent: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

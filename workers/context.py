@@ -13,12 +13,14 @@ from repositories.uow import SqlAlchemyUnitOfWork
 from services.delivery_service import DeliveryService
 from telemetry.log_context import configure_logging
 from telemetry.metrics import configure_metrics
+from telemetry.tracing import configure_tracing, shutdown_tracing
 
 
 async def build_worker_context(ctx: dict[str, Any], name: str = "worker") -> None:
     settings = get_settings()
     configure_logging(settings.logging)
     ctx["settings"] = settings
+    configure_tracing(settings.otel, service_name=f"pulse-{name}-worker")
     ctx["telemetry"] = configure_metrics(
         settings.otel, service_name=f"pulse-{name}-worker"
     )
@@ -42,6 +44,7 @@ async def build_worker_context(ctx: dict[str, Any], name: str = "worker") -> Non
 
 
 async def teardown_worker_context(ctx: dict[str, Any]) -> None:
+    shutdown_tracing()
     if ctx.get("telemetry") is not None:
         ctx["telemetry"].shutdown()
     await ctx["database"].shutdown()

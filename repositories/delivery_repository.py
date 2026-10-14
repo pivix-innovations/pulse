@@ -41,6 +41,7 @@ def _to_entity(row: DeliveryAttemptModel) -> DeliveryAttempt:
         provider_message_id=row.provider_message_id,
         template_id=TemplateId(row.template_id) if row.template_id else None,
         template_version=row.template_version,
+        traceparent=row.traceparent,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -71,6 +72,7 @@ class PostgresDeliveryAttemptRepository:
                 provider_message_id=a.provider_message_id,
                 template_id=a.template_id.value if a.template_id else None,
                 template_version=a.template_version,
+                traceparent=a.traceparent,
             )
             for a in attempts
         )

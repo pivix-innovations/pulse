@@ -13,6 +13,7 @@ from domain.value_objects.ids import DeliveryAttemptId, OutboxEntryId, TemplateI
 from services.ports.uow import UnitOfWork
 from services.templates import resolve
 from telemetry.metrics import get_metrics
+from telemetry.tracing import traceparent
 from services.rendering_service import RenderingService
 from workflows.channel_template import ChannelTemplate
 
@@ -63,6 +64,7 @@ def build_attempt(
         body_html=rendered.html,
         template_id=TemplateId.from_str(template.template_id) if template.template_id else None,
         template_version=template.template_version,
+        traceparent=traceparent(),
     )
 
 
@@ -80,6 +82,7 @@ def outbox_entries(notification: Notification, attempts: Sequence[DeliveryAttemp
                 "tenant_id": str(notification.tenant_id),
                 "channel": a.channel.value,
                 **({"defer_until": a.next_retry_at.isoformat()} if a.next_retry_at is not None else {}),
+                **({"traceparent": a.traceparent} if a.traceparent else {}),
             },
         )
         for a in attempts

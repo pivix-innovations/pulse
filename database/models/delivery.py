@@ -59,6 +59,7 @@ class DeliveryAttemptModel(Base, UUIDPrimaryKeyMixin, TenantMixin, TimestampMixi
     provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     template_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    traceparent: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("ix_delivery_attempts_provider_message_id", "tenant_id", "provider_message_id"),

@@ -19,6 +19,7 @@ async def _deliver(ctx: dict[str, Any], payload: dict[str, Any]) -> str:
     return await service.deliver(
         TenantId.from_str(payload["tenant_id"]),
         DeliveryAttemptId.from_str(payload["attempt_id"]),
+        traceparent=payload.get("traceparent"),
     )
 
 

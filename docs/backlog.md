@@ -37,7 +37,7 @@
 
 | ID | Item | Pri | Effort | Notes |
 | :--- | :--- | :--- | :--- | :--- |
-| D1 | OpenTelemetry tracing | Medium | L | Propagate `traceparent` through outbox entries and arq payloads: HTTP → relay → worker → webhook. |
+| D1 | OpenTelemetry tracing ✅ | Medium | L | Propagate `traceparent` through outbox entries and arq payloads: HTTP → relay → worker → webhook. |
 | D2 | Metrics & alerts (OpenTelemetry → OpenObserve) ✅ | High | M | Outbox lag, queue depth, stuck attempts, dead-letter rate, per-provider error rate and latency. OTLP export, so D1 tracing reuses it; see [observability.md](observability.md). |
 | D3 | Structured log correlation ✅ | Medium | S | Carry `notification_id`, `tenant_id` and `attempt_id` on every log line. Done for ingest, delivery and receipt webhooks (`telemetry/log_context.py`); format follows `PULSE_LOGGING__JSON` (JSON by default). |
 | D4 | Runbook | Low | S | Dead-letter replay, stuck-outbox recovery, provider failover. |

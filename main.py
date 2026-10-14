@@ -43,7 +43,10 @@ from services.notification_service import NotificationService
 from services.rendering_service import RenderingService
 from services.unsubscribe import UnsubscribeLinks
 from sse.registry import SseConnectionRegistry
+from opentelemetry.trace import SpanKind
+
 from telemetry.log_context import configure_logging
+from telemetry.tracing import configure_tracing, shutdown_tracing, span
 from telemetry.metrics import configure_metrics, get_metrics
 from telemetry.router import router as telemetry_router
 from workflows.registry import WorkflowRegistry
@@ -61,6 +64,8 @@ async def lifespan(app: FastAPI):
     )
     app.state.database = Database(settings.database)
     await app.state.database.initialize()
+
+    configure_tracing(settings.otel, service_name="pulse-api", version=settings.app.version)
 
     app.state.redis = Redis(
         host=settings.redis.host,
@@ -92,6 +97,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # shutdown
+    shutdown_tracing()
     if app.state.telemetry is not None:
         app.state.telemetry.shutdown()
     await app.state.redis.aclose()
@@ -118,6 +124,22 @@ def create_app() -> FastAPI:
         )
 
     app.middleware("http")(audit_middleware)
+
+    @app.middleware("http")
+    async def trace_requests(request: Request, call_next):
+        # Outermost: every span below (ingest, outbox rows, webhooks) nests under the request.
+        with span(
+            f"{request.method} {request.url.path}", parent=request.headers.get("traceparent"),
+            kind=SpanKind.SERVER, attributes={"http.request.method": request.method},
+        ) as current:
+            response = await call_next(request)
+            if current is not None:
+                route = getattr(request.scope.get("route"), "path", None)
+                if route:   # the template, so span names do not carry ids
+                    current.update_name(f"{request.method} {route}")
+                    current.set_attribute("http.route", route)
+                current.set_attribute("http.response.status_code", response.status_code)
+            return response
 
     @app.middleware("http")
     async def record_request_metrics(request: Request, call_next):

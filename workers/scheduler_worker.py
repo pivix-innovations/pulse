@@ -25,6 +25,7 @@ from services.digest_service import DigestFlusher
 from services.scheduling_service import SchedulingService
 from services.sequence_service import SequenceEngine, StepRunner
 from telemetry.log_context import configure_logging
+from telemetry.tracing import configure_tracing, shutdown_tracing
 from telemetry.metrics import (
     OperationsCollector,
     build_queue_depth_fn,
@@ -43,6 +44,7 @@ async def main() -> None:
     settings = get_settings()
     configure_logging(settings.logging)
 
+    configure_tracing(settings.otel, service_name="pulse-scheduler")
     telemetry = configure_metrics(settings.otel, service_name="pulse-scheduler")
     database = Database(settings.database)
     await database.initialize()
@@ -179,6 +181,7 @@ async def main() -> None:
     await asyncio.gather(*tasks, *([collector_task] if collector_task else []))
     if telemetry is not None:
         telemetry.shutdown()
+    shutdown_tracing()
     await pool.aclose()
     await database.shutdown()
 

@@ -1,7 +1,7 @@
 # Observability (OpenTelemetry → OpenObserve)
 
 Pulse records metrics with the OpenTelemetry SDK and exports them over OTLP/HTTP, so any OTLP backend works.
-**OpenObserve** is the reference backend (metrics, dashboards, alerts, and later traces and logs in one place).
+**OpenObserve** is the reference backend (metrics, traces, dashboards and alerts in one place; logs next).
 Export is off by default; with it off every instrument is a no-op.
 
 ## Turn it on
@@ -75,6 +75,29 @@ It reads `PULSE_O2_URL`, `PULSE_O2_ORG`, `PULSE_O2_EMAIL`, `PULSE_O2_PASSWORD` (
 Notes: OpenObserve rejects localhost/private destination URLs, so the webhook must be a public address (Slack, PagerDuty,
 etc.); and a rule can only be created once its metric has reported at least once, so rules whose stream is still
 empty are skipped with a message: re-run after Pulse has been running for a minute.
+
+## Traces
+
+With `PULSE_OTEL__ENABLED=true`, spans go to `<endpoint>/v1/traces` next to the metrics. One message is one trace across
+processes:
+
+```
+POST /events                      pulse-api          (continues an incoming W3C `traceparent` header if the caller sends one)
+└─ outbox.publish                 pulse-scheduler    (the outbox relay)
+   └─ delivery.attempt            pulse-<channel>-worker
+      └─ provider.send            the vendor call (attributes: provider, channel)
+webhook.receipt                   pulse-api          (the vendor's delivery receipt, joined to the same trace)
+```
+
+How the context crosses the hops: the request's `traceparent` is stored on each delivery attempt and copied into its
+outbox payload; the relay opens `outbox.publish` under it and hands the queue job its own `traceparent`; the worker
+opens `delivery.attempt` under that (retries re-enqueue with the current context); the receipt webhook looks the
+attempt up and opens `webhook.receipt` under the context stored on it. Failed provider calls and errors are recorded
+on the span. Follow one message by searching its `trace_id`, or filter on `pulse.attempt_id`.
+
+`PULSE_OTEL__TRACE_SAMPLE_RATIO` (default `1.0`) keeps that share of traces; the decision is made at the root, so a
+message's whole trace is kept or dropped together. With export off every span call is a no-op. Messages created
+before this feature have no stored context and start a new trace when their receipt arrives.
 
 ## Notes
 

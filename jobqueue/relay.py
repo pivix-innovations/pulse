@@ -4,9 +4,12 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from opentelemetry.trace import SpanKind
+
 from config.outbox import OutboxSettings
 from services.ports.publisher import JobPublisher
 from services.ports.uow import UnitOfWorkFactory
+from telemetry.tracing import span, traceparent
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +43,18 @@ class OutboxRelay:
             published = []
             for entry in entries:
                 try:
-                    await self._publisher.enqueue(
-                        entry.topic,
-                        entry.payload,
-                        job_id=f"outbox:{entry.id}",
-                        defer_by_seconds=self._defer_seconds(entry.payload),
-                    )
+                    # The job carries the relay span's context, so the worker's span hangs under it.
+                    with span(
+                        "outbox.publish", parent=entry.payload.get("traceparent"), kind=SpanKind.PRODUCER,
+                        attributes={"messaging.destination.name": entry.topic, "pulse.outbox_entry_id": str(entry.id)},
+                    ):
+                        payload = {**entry.payload, **({"traceparent": tp} if (tp := traceparent()) else {})}
+                        await self._publisher.enqueue(
+                            entry.topic,
+                            payload,
+                            job_id=f"outbox:{entry.id}",
+                            defer_by_seconds=self._defer_seconds(entry.payload),
+                        )
                     published.append(entry.id)
                 except Exception:
                     logger.exception("Failed to publish outbox entry %s", entry.id)
