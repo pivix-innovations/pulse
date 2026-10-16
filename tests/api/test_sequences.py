@@ -106,3 +106,28 @@ async def test_a_buffered_notification_reports_its_digest(world):
     assert first["digest"]["is_anchor"] is True and second["digest"]["is_anchor"] is False
     assert second["digest"]["anchor_notification_id"] == ids[0]
     assert first["digest"]["batch_id"] == second["digest"]["batch_id"]
+
+
+async def test_an_operator_can_cancel_the_steps_that_have_not_run_yet(world):
+    await world.client.post("/api/v1/workflows", headers=world.key_headers, json=workflow({"steps": STEPS}))
+    nid = (await world.client.post("/api/v1/events", headers=world.key_headers, json={
+        "event_type": "order.placed", "source": "t", "idempotency_key": "k-cancel",
+    })).json()["notification_id"]
+    url = f"/api/v1/notifications/{nid}/cancel-sequence"
+
+    first = await world.client.post(url, headers=world.key_headers)
+    assert first.status_code == 200 and first.json()["cancelled"] == 1
+
+    detail = (await world.client.get(f"/api/v1/notifications/{nid}", headers=world.key_headers)).json()
+    steps = {s["step_id"]: s for s in detail["steps"]}
+    assert steps["nudge"]["status"] == "done"                      # what already ran stays as it was
+    assert steps["mail"]["status"] == "skipped" and steps["mail"]["reason"] == "cancelled by an operator"
+    assert [a["channel"] for a in detail["attempts"]] == ["in_app"]
+
+    again = await world.client.post(url, headers=world.key_headers)
+    assert again.status_code == 200 and again.json()["cancelled"] == 0
+
+
+async def test_cancelling_an_unknown_notification_is_404(world):
+    r = await world.client.post("/api/v1/notifications/00000000-0000-0000-0000-000000000000/cancel-sequence", headers=world.key_headers)
+    assert r.status_code == 404

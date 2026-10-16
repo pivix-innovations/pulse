@@ -136,6 +136,7 @@ async def iso(world):
 ATTACKS = [
     ("b", "GET", "/api/v1/notifications/{notification}", None),
     ("b", "POST", "/api/v1/notifications/{notification}/ack", {"attempt_id": "{attempt}"}),
+    ("b", "POST", "/api/v1/notifications/{notification}/cancel-sequence", None),
     ("b", "GET", "/api/v1/providers/{provider}", None),
     ("b", "PUT", "/api/v1/providers/{provider}", {
         "channel": "email", "name": "resend", "label": "hijacked",
@@ -462,6 +463,7 @@ async def test_every_tenant_route_rejects_anonymous_callers(world):
 COVERED = {
     # resource routes: ATTACKS above
     ("GET", "/api/v1/notifications/{notification_id}"), ("POST", "/api/v1/notifications/{notification_id}/ack"),
+    ("POST", "/api/v1/notifications/{notification_id}/cancel-sequence"),
     ("GET", "/api/v1/providers/{provider_id}"), ("PUT", "/api/v1/providers/{provider_id}"),
     ("DELETE", "/api/v1/providers/{provider_id}"), ("POST", "/api/v1/provider-catalog/{channel}/{key}/test"),
     ("GET", "/api/v1/workflows/{workflow_id}"), ("PUT", "/api/v1/workflows/{workflow_id}"),

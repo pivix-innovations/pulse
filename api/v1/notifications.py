@@ -54,6 +54,36 @@ async def ack_notification(
         return AckOut(attempt_id=body.attempt_id, status=attempt.status)
 
 
+class CancelOut(BaseModel):
+    cancelled: int
+    status: NotificationStatus
+
+
+@router.post("/{notification_id}/cancel-sequence", response_model=CancelOut)
+async def cancel_sequence(
+    notification_id: uuid.UUID,
+    tenant_id: TenantId = Depends(require_scope("admin")),
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+) -> CancelOut:
+    """
+    Stop the steps of a sequence that have not run yet (every recipient). Steps that already ran
+    and their deliveries are untouched; the waiting steps are recorded as skipped. Idempotent:
+    with nothing waiting, `cancelled` is 0.
+    """
+    async with uow:
+        notification = await uow.notifications.get(tenant_id, NotificationId(notification_id))
+        if notification is None:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        cancelled = await uow.step_runs.cancel_open(
+            notification.id, "cancelled by an operator", datetime.now(timezone.utc)
+        )
+        if cancelled:
+            await settle_notification(uow, tenant_id, notification.id)   # nothing left to wait for
+            await uow.commit()
+            notification = await uow.notifications.get(tenant_id, notification.id) or notification
+    return CancelOut(cancelled=cancelled, status=notification.status)
+
+
 @router.get("", response_model=list[NotificationSummaryOut])
 async def list_notifications(
     response: Response,
