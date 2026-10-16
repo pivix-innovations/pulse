@@ -4,6 +4,7 @@ import { chLabel } from "@/lib/format";
 import type { Provider } from "@/lib/types";
 import { ChannelBadge } from "./ui";
 import { ProviderLogo } from "./provider";
+import { SequenceBuilder, fromSteps, toSteps, type SeqStep } from "./sequence-builder";
 
 export const WF_CHANNELS = ["email", "push", "sms", "in_app"] as const;
 const WF_FORMATS = ["markdown", "html", "text"];
@@ -58,20 +59,35 @@ export function WorkflowEditor({ initial, providers, templates, getRef }: {
   const isSeq = Array.isArray(initial.steps) && initial.steps.length > 0;
   const [st, setSt] = useState<St>(() => fromDefinition(initial));
   const [sequence, setSequence] = useState(isSeq);
-  const [jsonMode, setJsonMode] = useState(isSeq);
+  const [jsonMode, setJsonMode] = useState(false);          // classic: raw JSON instead of the channel form
+  const [seqJson, setSeqJson] = useState(false);            // sequence: raw JSON instead of the step builder
+  const [seq, setSeq] = useState<SeqStep[]>(() => fromSteps(isSeq ? initial.steps : []));
+  const rest = useMemo(() => { const { steps: _s, channels: _c, fallbacks: _f, fallback_templates: _ft, ...others } = initial; void _s; void _c; void _f; void _ft; return others;   // a sequence has steps, never channels }, [initial]);
   const [jsonText, setJsonText] = useState(() => JSON.stringify(initial, null, 2));
   const [jsonErr, setJsonErr] = useState(false);
   const byId = useMemo(() => Object.fromEntries(providers.map(p => [p.id, p])), [providers]);
   const [dragFrom, setDragFrom] = useState<{ ch: string; i: number } | null>(null);
 
+  const seqDefinition = () => ({ ...rest, steps: toSteps(seq) });
   getRef(() => {
-    if (jsonMode) { try { return JSON.parse(jsonText); } catch { throw new Error("Definition is not valid JSON"); } }
+    if (sequence && !seqJson) return seqDefinition();
+    if (jsonMode || (sequence && seqJson)) { try { return JSON.parse(jsonText); } catch { throw new Error("Definition is not valid JSON"); } }
     return toDefinition(st);
   });
 
   const upd = (fn: (s: St) => void) => setSt(s => { const n = structuredClone(s); fn(n); return n; });
 
-  if (jsonMode) return (
+  if (sequence && !seqJson) return (
+    <>
+      <div className="chain-note" style={{ marginBottom: 12 }}><b>Sequence workflow.</b> Messages go out step by step instead of all at once.</div>
+      <SequenceBuilder steps={seq} onChange={setSeq} templates={templates} providers={providers} />
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+        <button type="button" className="btn sm" onClick={() => { setJsonText(JSON.stringify(seqDefinition(), null, 2)); setJsonErr(false); setSeqJson(true); }}>Edit as JSON</button>
+      </div>
+    </>
+  );
+
+  if (jsonMode || sequence) return (
     <>
       {sequence && <div className="chain-note" style={{ marginBottom: 10 }}><b>Sequence workflow.</b> Each step sends on a channel, optionally after a{" "}
         <code>delay</code> (<code>&quot;10m&quot;</code>, <code>&quot;2h&quot;</code>, seconds) and only <code>when</code> its condition holds:{" "}
@@ -80,9 +96,14 @@ export function WorkflowEditor({ initial, providers, templates, getRef }: {
       <div className="field"><label>Definition (JSON)</label>
         <textarea rows={16} spellCheck={false} value={jsonText} onChange={e => setJsonText(e.target.value)} /></div>
       {jsonErr && <div className="chain-note" style={{ color: "var(--red)" }}>That JSON isn&apos;t valid yet</div>}
-      {!sequence && <button type="button" className="btn sm" onClick={() => {
-        try { setSt(fromDefinition(JSON.parse(jsonText))); setJsonErr(false); setJsonMode(false); } catch { setJsonErr(true); }
-      }}>← Back to form</button>}
+      <button type="button" className="btn sm" onClick={() => {
+        try {
+          const d = JSON.parse(jsonText);
+          if (sequence) { setSeq(fromSteps(Array.isArray(d.steps) ? d.steps : [])); setSeqJson(false); }
+          else { setSt(fromDefinition(d)); setJsonMode(false); }
+          setJsonErr(false);
+        } catch { setJsonErr(true); }
+      }}>{sequence ? "← Back to the step builder" : "← Back to form"}</button>
     </>
   );
 
@@ -183,7 +204,7 @@ export function WorkflowEditor({ initial, providers, templates, getRef }: {
         <span style={{ display: "flex", gap: 8 }}>
           <button type="button" className="btn sm" title="Send in steps with delays and conditions" onClick={() => {
             if (st.channels.length && !window.confirm("Switch to a sequence? The channels above are replaced by the example steps.")) return;
-            setSequence(true); setJsonMode(true); setJsonText(JSON.stringify(SEQUENCE_EXAMPLE, null, 2));
+            setSeq(fromSteps(SEQUENCE_EXAMPLE.steps)); setSequence(true); setSeqJson(false);
           }}>Make it a sequence…</button>
           <button type="button" className="btn sm" onClick={() => { setJsonText(JSON.stringify(toDefinition(st), null, 2)); setJsonMode(true); }}>Edit as JSON</button>
         </span>
