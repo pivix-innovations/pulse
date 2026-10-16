@@ -47,9 +47,14 @@ from services.ports.providers import OutboundMessage, SendResult
 
 
 class InMemoryNotificationRepository:
-    def __init__(self, attempts: "InMemoryDeliveryAttemptRepository | None" = None) -> None:
+    def __init__(
+        self,
+        attempts: "InMemoryDeliveryAttemptRepository | None" = None,
+        events: "InMemoryEventRepository | None" = None,
+    ) -> None:
         self.items: dict[str, Notification] = {}
         self._attempts = attempts
+        self._events = events
 
     async def add(self, notification: Notification) -> None:
         self.items[str(notification.id)] = notification
@@ -88,14 +93,30 @@ class InMemoryNotificationRepository:
         tenant_id: TenantId,
         *,
         status: NotificationStatus | None = None,
+        event_type: str | None = None,
+        recipient_id=None,
+        channel=None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Notification], int]:
-        matches = [
-            n
-            for n in self.items.values()
-            if n.tenant_id == tenant_id and (status is None or n.status is status)
-        ]
+        attempts = list(self._attempts.items.values()) if self._attempts else []
+        event_types = {str(e.id): e.event_type for e in self._events.items.values()} if self._events else {}
+
+        def matches_one(n: Notification) -> bool:
+            if n.tenant_id != tenant_id or (status is not None and n.status is not status):
+                return False
+            if event_type is not None and event_types.get(str(n.event_id)) != event_type:
+                return False
+            if recipient_id is not None or channel is not None:
+                return any(
+                    a.notification_id == n.id
+                    and (recipient_id is None or a.recipient_id == recipient_id)
+                    and (channel is None or a.channel is channel)
+                    for a in attempts
+                )
+            return True
+
+        matches = [n for n in self.items.values() if matches_one(n)]
         return matches[offset : offset + limit], len(matches)
 
     async def update(self, notification: Notification) -> None:
@@ -1027,12 +1048,12 @@ class InMemoryUnitOfWork:
 
     def __init__(self) -> None:
         self.delivery_attempts = InMemoryDeliveryAttemptRepository()
-        self.notifications = InMemoryNotificationRepository(self.delivery_attempts)
+        self.events = InMemoryEventRepository()
+        self.notifications = InMemoryNotificationRepository(self.delivery_attempts, self.events)
         self.preferences = InMemoryPreferenceRepository()
         self.suppressions = InMemorySuppressionRepository()
         self.audit = InMemoryAuditRepository()
         self.category_preferences = InMemoryCategoryPreferenceRepository()
-        self.events = InMemoryEventRepository()
         self.workflows = InMemoryWorkflowRepository()
         self.recipients = InMemoryRecipientRepository()
         self.outbox = InMemoryOutboxRepository()

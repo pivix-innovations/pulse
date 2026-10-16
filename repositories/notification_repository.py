@@ -7,14 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import (
     DeliveryAttemptModel,
+    EventModel,
     DigestBatchModel,
     DigestItemModel,
     NotificationModel,
     WorkflowStepRunModel,
 )
 from domain.entities.notification import Notification
-from domain.enums import DeliveryStatus, NotificationStatus
-from domain.value_objects.ids import EventId, NotificationId, TenantId, WorkflowId
+from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
+from domain.value_objects.ids import EventId, NotificationId, RecipientId, TenantId, WorkflowId
 
 
 def _to_entity(row: NotificationModel) -> Notification:
@@ -134,12 +135,33 @@ class PostgresNotificationRepository:
         tenant_id: TenantId,
         *,
         status: NotificationStatus | None = None,
+        event_type: str | None = None,
+        recipient_id: RecipientId | None = None,
+        channel: ChannelType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Notification], int]:
         conditions = [NotificationModel.tenant_id == tenant_id.value]
         if status is not None:
             conditions.append(NotificationModel.status == status)
+        if event_type is not None:
+            conditions.append(
+                NotificationModel.event_id.in_(
+                    select(EventModel.id).where(
+                        EventModel.tenant_id == tenant_id.value, EventModel.event_type == event_type
+                    )
+                )
+            )
+        if recipient_id is not None or channel is not None:
+            attempt = [
+                DeliveryAttemptModel.notification_id == NotificationModel.id,
+                DeliveryAttemptModel.tenant_id == tenant_id.value,
+            ]
+            if recipient_id is not None:
+                attempt.append(DeliveryAttemptModel.recipient_id == recipient_id.value)
+            if channel is not None:
+                attempt.append(DeliveryAttemptModel.channel == channel)
+            conditions.append(exists().where(*attempt))
         total = (
             await self._session.execute(select(func.count()).select_from(NotificationModel).where(*conditions))
         ).scalar_one()

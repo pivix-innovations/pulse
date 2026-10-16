@@ -69,10 +69,17 @@ class NotificationRepository(Protocol):
         tenant_id: TenantId,
         *,
         status: NotificationStatus | None = None,
+        event_type: str | None = None,
+        recipient_id: RecipientId | None = None,
+        channel: ChannelType | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[Notification], int]:
-        """Newest-first page plus the total matching count."""
+        """
+        Newest-first page plus the total matching count. `event_type` matches the
+        notification's event; `recipient_id` and `channel` match notifications
+        that have a delivery attempt for that recipient / on that channel.
+        """
         ...
 
     async def update(self, notification: Notification) -> None: ...
