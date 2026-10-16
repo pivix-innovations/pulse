@@ -3,7 +3,8 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api, apiPage, qs } from "@/lib/api";
 import { useAct, useTq } from "@/lib/hooks";
-import { fmtDate } from "@/lib/format";
+import { useToast } from "@/components/toast";
+import { chLabel, fmtDate } from "@/lib/format";
 import type { Provider } from "@/lib/types";
 import { Badge, Card, ChannelBadge, EmptyState, Pager, ShortId, rowProps } from "@/components/ui";
 import { ProviderCell } from "@/components/provider";
@@ -25,8 +26,14 @@ function Page() {
   const id = useSearchParams().get("id") ?? "";
   const [draft, setDraft] = useState(id);
   const [status, setStatus] = useState("");
+  const [channel, setChannel] = useState("");
+  const [eventType, setEventType] = useState("");
+  const [person, setPerson] = useState("");
+  const [recipient, setRecipient] = useState("");   // applied on submit, so typing doesn't query per keystroke
   const [offset, setOffset] = useState(0);
-  const recent = useTq(["notifications", status, offset], () => apiPage<Summary>(`/notifications${qs({ limit: PAGE, offset, status })}`));
+  const filtered = !!(status || channel || eventType.trim() || recipient);
+  const recent = useTq(["notifications", status, channel, eventType.trim(), recipient, offset], () =>
+    apiPage<Summary>(`/notifications${qs({ limit: PAGE, offset, status, channel, event_type: eventType.trim(), recipient })}`), { refetchInterval: 15_000 });
   const items = recent.data?.data ?? [];
   const open = (v: string) => { setDraft(v); router.push(`/notifications?id=${encodeURIComponent(v.trim())}`); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
@@ -42,14 +49,26 @@ function Page() {
 
       {id && <Detail id={id} />}
 
-      <Card title="Recent notifications" flush actions={
-        <select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }} style={{ width: "auto" }} aria-label="Status filter">
-          <option value="">All statuses</option>
-          {["created", "processing", "dispatched", "completed", "failed"].map(s => <option key={s}>{s}</option>)}
-        </select>}>
+      <Card title="Search notifications" sub="Find notifications by who they went to, what triggered them, and how they were sent." style={{ marginBottom: 20 }}>
+        <form className="toolbar" onSubmit={e => { e.preventDefault(); setRecipient(person.trim()); setOffset(0); }}>
+          <input value={person} onChange={e => setPerson(e.target.value)} placeholder="Recipient (e.g. user-123)" spellCheck={false} style={{ flex: 1, minWidth: 160 }} aria-label="Recipient" />
+          <input value={eventType} onChange={e => { setEventType(e.target.value); setOffset(0); }} placeholder="Event type (e.g. user.signed_up)" spellCheck={false} style={{ flex: 1, minWidth: 180 }} aria-label="Event type" />
+          <select value={channel} onChange={e => { setChannel(e.target.value); setOffset(0); }} style={{ width: "auto" }} aria-label="Channel filter">
+            <option value="">Any channel</option>{["email", "push", "sms", "in_app"].map(c => <option key={c} value={c}>{chLabel(c)}</option>)}
+          </select>
+          <select value={status} onChange={e => { setStatus(e.target.value); setOffset(0); }} style={{ width: "auto" }} aria-label="Status filter">
+            <option value="">All statuses</option>
+            {["created", "processing", "dispatched", "completed", "failed"].map(s => <option key={s}>{s}</option>)}
+          </select>
+          <button className="btn primary" type="submit">Search</button>
+          {filtered && <button className="btn" type="button" onClick={() => { setStatus(""); setChannel(""); setEventType(""); setPerson(""); setRecipient(""); setOffset(0); }}>Clear</button>}
+        </form>
+      </Card>
+
+      <Card title={filtered ? "Matching notifications" : "Recent notifications"} flush>
         {recent.isLoading ? <EmptyState title="Loading…" />
           : recent.isError ? <EmptyState title="Couldn't load notifications" hint={(recent.error as Error).message} />
-          : items.length === 0 ? <EmptyState title="No notifications" hint="Send an event and it will show up here." />
+          : items.length === 0 ? <EmptyState title="No notifications" hint={filtered ? "Nothing matches these filters." : "Send an event and it will show up here."} />
           : (
             <>
               <table>
@@ -69,11 +88,15 @@ function Page() {
 }
 
 function Detail({ id }: { id: string }) {
+  const toast = useToast();
   const n = useTq<Notification>(["notification", id], () => api(`/notifications/${encodeURIComponent(id.trim())}`));
   const providers = useTq<Provider[]>(["providers"], () => api<Provider[]>("/providers").catch(() => []));
   const byId = Object.fromEntries((providers.data ?? []).map(p => [p.id, p]));
   const ack = useAct((attempt_id: string) => api(`/notifications/${encodeURIComponent(id.trim())}/ack`, { method: "POST", body: { attempt_id } }),
     { ok: "Attempt acknowledged as delivered", invalidate: ["notification"] });
+
+  const cancel = useAct(() => api<{ cancelled: number }>(`/notifications/${encodeURIComponent(id.trim())}/cancel-sequence`, { method: "POST" }),
+    { invalidate: ["notification", "notifications"], onDone: r => toast(r.cancelled ? `Cancelled ${r.cancelled} waiting step${r.cancelled === 1 ? "" : "s"}` : "No steps were waiting", "ok") });
 
   if (n.isLoading) return null;
   if (n.isError) return <Card style={{ marginBottom: 20 }}><EmptyState title="Lookup failed" hint={(n.error as Error).message} /></Card>;
@@ -111,7 +134,10 @@ function Detail({ id }: { id: string }) {
         </Card>
       )}
       {!!d.steps?.length && (
-        <Card title={`Sequence steps (${d.steps.length})`} flush style={{ marginTop: 20 }}>
+        <Card title={`Sequence steps (${d.steps.length})`} flush style={{ marginTop: 20 }}
+          actions={d.steps.some(r => r.status === "scheduled") && (
+            <button className="btn sm danger" disabled={cancel.isPending}
+              onClick={() => window.confirm("Cancel the steps that have not run yet? Steps that already ran are not affected.") && cancel.mutate()}>Cancel remaining steps</button>)}>
           <table>
             <thead><tr><th>Step</th><th>Recipient</th><th>State</th><th>Runs / ran</th><th>Why</th></tr></thead>
             <tbody>{d.steps.map(r => (
