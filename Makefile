@@ -36,6 +36,20 @@ o2-apply: ## Create/update the OpenObserve alert rules and dashboard (see docs/o
 seed-admin: ## Bootstrap the first platform admin + tenant (idempotent)
 	$(UV) python -m scripts.seed_admin $(if $(email),$(email)) $(if $(password),$(password)) $(if $(tenant),$(tenant))
 
+# ── Console (Next.js, web/) ───────────────────────────────────────────
+
+.PHONY: web-install
+web-install: ## Install console dependencies
+	cd web && npm install
+
+.PHONY: web
+web: ## Run the Next.js console on :3100, proxying /api to the Pulse API on :$(PORT)
+	cd web && PULSE_API_ORIGIN=http://localhost:$(PORT) npm run dev
+
+.PHONY: web-build
+web-build: ## Type-check, lint and production-build the console
+	cd web && npx tsc --noEmit && npm run lint && npm run build
+
 # ── Infrastructure (Postgres + Redis) ─────────────────────────────────
 
 .PHONY: infra-up
