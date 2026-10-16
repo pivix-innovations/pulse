@@ -1,10 +1,8 @@
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from jobqueue.circuit_breaker import RedisCircuitBreaker
@@ -182,14 +180,6 @@ def create_app() -> FastAPI:
     app.include_router(provider_catalog_router, prefix="/api/v1")
     app.include_router(providers_router, prefix="/api/v1")
     app.include_router(metrics_router, prefix="/api/v1")
-
-    ui_dir = Path(__file__).parent / "ui"
-    if ui_dir.is_dir():
-        app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
-
-        @app.get("/", include_in_schema=False)
-        async def index() -> RedirectResponse:
-            return RedirectResponse(url="/ui/")
 
     return app
 
