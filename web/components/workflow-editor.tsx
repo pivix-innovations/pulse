@@ -62,7 +62,7 @@ export function WorkflowEditor({ initial, providers, templates, getRef }: {
   const [jsonMode, setJsonMode] = useState(false);          // classic: raw JSON instead of the channel form
   const [seqJson, setSeqJson] = useState(false);            // sequence: raw JSON instead of the step builder
   const [seq, setSeq] = useState<SeqStep[]>(() => fromSteps(isSeq ? initial.steps : []));
-  const rest = useMemo(() => { const { steps: _s, channels: _c, fallbacks: _f, fallback_templates: _ft, ...others } = initial; void _s; void _c; void _f; void _ft; return others;   // a sequence has steps, never channels }, [initial]);
+  const rest = useMemo(() => { const { steps: _s, channels: _c, fallbacks: _f, fallback_templates: _ft, ...others } = initial; void _s; void _c; void _f; void _ft; return others; }, [initial]);   // a sequence has steps, never channels
   const [jsonText, setJsonText] = useState(() => JSON.stringify(initial, null, 2));
   const [jsonErr, setJsonErr] = useState(false);
   const byId = useMemo(() => Object.fromEntries(providers.map(p => [p.id, p])), [providers]);
