@@ -341,6 +341,12 @@ class MetricsRepository(Protocol):
 
     async def dead_letter_count(self, tenant_id: TenantId, since: datetime) -> int: ...
 
+    async def attempts_timeline(
+        self, tenant_id: TenantId, since: datetime, bucket_seconds: int
+    ) -> list[tuple[datetime, DeliveryStatus, int]]:
+        """Attempts created since `since`, counted per fixed-width time bucket and status (sparse: empty buckets are absent)."""
+        ...
+
     async def avg_confirmation_seconds(
         self, tenant_id: TenantId, since: datetime
     ) -> float | None:

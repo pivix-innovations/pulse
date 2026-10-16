@@ -883,6 +883,19 @@ class InMemoryMetricsRepository:
                 counts[(a.channel, a.status)] = counts.get((a.channel, a.status), 0) + 1
         return [(c, s, n) for (c, s), n in counts.items()]
 
+    async def attempts_timeline(
+        self, tenant_id: TenantId, since: datetime, bucket_seconds: int
+    ) -> list[tuple[datetime, DeliveryStatus, int]]:
+        epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        counts: dict[tuple[datetime, DeliveryStatus], int] = {}
+        for a in self._uow.delivery_attempts.items.values():
+            at = a.created_at or datetime.now(timezone.utc)   # a fake attempt has no server-side timestamp
+            if a.tenant_id != tenant_id or at < since:
+                continue
+            start = epoch + timedelta(seconds=((at - epoch).total_seconds() // bucket_seconds) * bucket_seconds)
+            counts[(start, a.status)] = counts.get((start, a.status), 0) + 1
+        return sorted(((b, s, n) for (b, s), n in counts.items()), key=lambda t: t[0])
+
     async def notifications_by_status(
         self, tenant_id: TenantId, since: datetime
     ) -> list[tuple[str, int]]:
