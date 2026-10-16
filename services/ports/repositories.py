@@ -26,6 +26,7 @@ from domain.entities.template import Template, TemplateVersion
 from domain.entities.workflow import Workflow
 from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import (
+    DeviceTokenId,
     CategoryPreferenceId,
     SuppressionId,
     DeliveryAttemptId,
@@ -369,7 +370,11 @@ class DeviceTokenRepository(Protocol):
     ) -> list[DeviceToken]: ...
 
     async def delete_tokens(self, tenant_id: TenantId, tokens: list[str]) -> int:
-        """Remove tokens a provider reported dead; returns how many were removed."""
+        """Remove tokens a provider reported dead (or a client unregistered); returns how many were removed."""
+        ...
+
+    async def delete(self, tenant_id: TenantId, device_id: DeviceTokenId) -> bool:
+        """Remove one registration by id; False when it does not exist in this tenant."""
         ...
 
 

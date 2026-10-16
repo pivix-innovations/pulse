@@ -121,6 +121,22 @@ async def test_deleting_dead_tokens_is_tenant_scoped_and_counts(env):
         assert len(await uow.device_tokens.list_for_recipient(stranger.tenant, stranger.recipient.id)) == 1
 
 
+async def test_deleting_a_device_by_id_is_tenant_scoped(env):
+    g = await seed(env)
+    stranger = await seed(env)
+    async with env.uow() as uow:
+        mine = await uow.device_tokens.upsert(DeviceToken(
+            id=DeviceTokenId.new(), tenant_id=g.tenant, recipient_id=g.recipient.id,
+            platform=DevicePlatform.WEB, token="mine"))
+        await uow.commit()
+        assert await uow.device_tokens.delete(stranger.tenant, mine.id) is False   # not theirs
+        assert len(await uow.device_tokens.list_for_recipient(g.tenant, g.recipient.id)) == 1
+        assert await uow.device_tokens.delete(g.tenant, mine.id) is True
+        assert await uow.device_tokens.delete(g.tenant, mine.id) is False          # already gone
+        await uow.commit()
+        assert await uow.device_tokens.list_for_recipient(g.tenant, g.recipient.id) == []
+
+
 async def test_preferences_upsert_replaces_per_channel_and_delete_is_scoped(env):
     g = await seed(env)
     async with env.uow() as uow:

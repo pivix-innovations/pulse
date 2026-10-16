@@ -85,3 +85,13 @@ class PostgresDeviceTokenRepository:
         )
         await self._session.flush()
         return result.rowcount or 0
+
+    async def delete(self, tenant_id: TenantId, device_id: DeviceTokenId) -> bool:
+        result = await self._session.execute(
+            delete(DeviceTokenModel).where(
+                DeviceTokenModel.tenant_id == tenant_id.value,
+                DeviceTokenModel.id == device_id.value,
+            )
+        )
+        await self._session.flush()
+        return bool(result.rowcount)

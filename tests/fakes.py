@@ -683,6 +683,13 @@ class InMemoryDeviceTokenRepository:
             del self.items[k]
         return len(doomed)
 
+    async def delete(self, tenant_id, device_id) -> bool:
+        t = self.items.get(str(device_id))
+        if t is None or t.tenant_id != tenant_id:
+            return False
+        del self.items[str(device_id)]
+        return True
+
 
 class InMemoryDeadLetterRepository:
     def __init__(self) -> None:
