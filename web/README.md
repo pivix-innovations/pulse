@@ -1,7 +1,7 @@
 # Pulse Console (Next.js)
 
 The operator console for Pulse: Next.js App Router, React 19, TypeScript, TanStack Query.
-It replaces the single-file console in `../ui/index.html`, which stays in place until cut-over.
+It is deployed separately from the API (the old `ui/index.html` console is gone) and talks to it only over HTTP.
 
 ```bash
 make web-install   # once

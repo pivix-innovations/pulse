@@ -233,7 +233,7 @@ uv run uvicorn main:app --reload --port 9000
 
 ### Admin console
 
-A zero-build admin UI ([ui/index.html](ui/index.html)) is served by the API at [http://localhost:9000/ui/](http://localhost:9000/ui/) (`/` redirects there). Sign in with a seeded or invited account; a tenant switcher in the top bar picks the tenant you act on. It covers metrics, event ingestion, notification/delivery inspection with client acks, a live SSE stream viewer, CRUD for workflows/templates/providers/preferences/devices, and — role-permitting — team membership, API keys, and platform-wide tenant/user administration.
+The admin console is a separate Next.js app in [web/](web/) (see [web/README.md](web/README.md)); the API serves no UI. `make web` runs it in development on [http://localhost:3100](http://localhost:3100), and `make start` builds and runs it as a Node service beside the API. It proxies `/api` to the API (`PULSE_API_ORIGIN`), so the two deploy independently. Sign in with a seeded or invited account; a tenant switcher in the top bar picks the tenant you act on. It covers metrics, event ingestion, notification/delivery inspection with client acks, a live SSE stream viewer, the recipient inbox, CRUD for workflows/templates/providers/preferences/devices, and — role-permitting — team membership, API keys, and platform-wide tenant/user administration.
 
 ## Identity & multi-tenancy
 
