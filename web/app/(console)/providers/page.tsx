@@ -2,27 +2,20 @@
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useAct, useTq } from "@/lib/hooks";
-import { chLabel, fmtDate } from "@/lib/format";
+import { chLabel } from "@/lib/format";
 import type { Provider } from "@/lib/types";
 import { useToast } from "@/components/toast";
 import { ActiveBadge, Card, ChannelBadge, EmptyState, Field, Modal, errMsg } from "@/components/ui";
 import { ProviderLogo } from "@/components/provider";
+import { HealthView, type Health } from "@/components/provider-health";
 
 interface CatField { key: string; label: string; kind?: string; secret?: boolean; required?: boolean; default?: any; options?: string[]; help?: string }
 interface Spec { id: string; channel: string; key: string; name: string; description: string; logo_url: string; builtin?: boolean; testable?: boolean; fields: CatField[] }
-interface Health {
-  provider_id: string; status: string; circuit?: string; success_rate: number | null; calls: number;
-  p95_latency_ms: number | null; last_failure_at?: string; last_error?: string; window_hours: number;
-}
 interface FullProvider extends Provider {
   name: string; config: Record<string, any>; secrets_set: string[]; used_by: { name: string }[];
   webhook_path?: string; webhook_url?: string; priority?: number;
 }
 const CHANNELS = ["email", "push", "sms", "in_app"];
-const LOOK: Record<string, { color: string; label: string }> = {
-  healthy: { color: "green", label: "healthy" }, degraded: { color: "amber", label: "degraded" },
-  down: { color: "red", label: "down" }, idle: { color: "", label: "no recent traffic" },
-};
 
 export default function Providers() {
   const toast = useToast();
@@ -67,24 +60,6 @@ export default function Providers() {
   );
 }
 
-function HealthView({ h }: { h?: Health }) {
-  if (!h) return null;
-  const look = h.circuit === "open" ? { color: "red", label: "paused · circuit open" }
-    : h.circuit === "half_open" ? { color: "amber", label: "testing recovery" } : LOOK[h.status] || LOOK.idle;
-  const parts: string[] = [];
-  if (h.success_rate !== null) parts.push(`${(h.success_rate * 100).toFixed(h.success_rate === 1 ? 0 : 1)}% of ${h.calls} calls ok`);
-  if (h.p95_latency_ms !== null) parts.push(`p95 ${Math.round(h.p95_latency_ms)} ms`);
-  return (
-    <>
-      <div style={{ marginTop: 6, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <span className={`badge ${look.color}`}>{look.label}</span>
-        <span className="muted" style={{ fontSize: 12 }}>{parts.join(" · ") || `last ${h.window_hours}h`}</span>
-      </div>
-      {h.last_failure_at && <div className="muted" style={{ fontSize: 12, marginTop: 2 }} title={h.last_error}>
-        Last failure {fmtDate(h.last_failure_at)}{h.last_error ? ` — ${h.last_error.slice(0, 90)}` : ""}</div>}
-    </>
-  );
-}
 
 function Receipts({ p }: { p: FullProvider }) {
   const toast = useToast();
