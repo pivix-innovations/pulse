@@ -34,6 +34,18 @@ services:
       volumes:
         - openobserve_data:/data
 
+  # The console. Opt in:  docker compose --profile app up -d --build web
+  # Rewrites are compiled in: set PULSE_API_ORIGIN to where this container reaches the API.
+  web:
+      build:
+        context: ./web
+        args:
+          PULSE_API_ORIGIN: ${PULSE_API_ORIGIN:-http://host.docker.internal:9000}
+      profiles: ['app']
+      restart: unless-stopped
+      ports:
+        - '${PULSE_WEB_PORT:-3100}:3100'
+
 volumes:
   openobserve_data:
   postgres_data:

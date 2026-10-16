@@ -6,6 +6,7 @@ import type { NextConfig } from "next";
 const API_ORIGIN = process.env.PULSE_API_ORIGIN ?? "http://localhost:9000";
 
 const nextConfig: NextConfig = {
+  output: "standalone", // minimal Node server for the Docker image
   // FastAPI routes like /health/ carry a trailing slash; do not redirect it away.
   skipTrailingSlashRedirect: true,
   turbopack: {
