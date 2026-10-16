@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from api.dependencies import get_uow, require_scope
 from api.v1.schemas import DeliveryAttemptOut, NotificationOut, DigestOut, NotificationSummaryOut, StepRunOut
-from domain.enums import DeliveryStatus, NotificationStatus
+from domain.enums import ChannelType, DeliveryStatus, NotificationStatus
 from domain.value_objects.ids import DeliveryAttemptId, NotificationId, TenantId
 from repositories.uow import SqlAlchemyUnitOfWork
 from services.settlement import settle_notification
@@ -58,14 +58,25 @@ async def ack_notification(
 async def list_notifications(
     response: Response,
     status: NotificationStatus | None = None,
+    event_type: str | None = Query(default=None, max_length=255, description="Only notifications for this event type"),
+    recipient: str | None = Query(default=None, max_length=255, description="Only notifications with an attempt for this recipient (external ref)"),
+    channel: ChannelType | None = Query(default=None, description="Only notifications with an attempt on this channel"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[NotificationSummaryOut]:
     async with uow:
+        recipient_id = None
+        if recipient is not None:
+            row = await uow.recipients.get_by_external_ref(tenant_id, recipient)
+            if row is None:   # nobody by that name: nothing can match
+                response.headers["X-Total-Count"] = "0"
+                return []
+            recipient_id = row.id
         items, total = await uow.notifications.list_for_tenant(
-            tenant_id, status=status, limit=limit, offset=offset
+            tenant_id, status=status, event_type=event_type, recipient_id=recipient_id,
+            channel=channel, limit=limit, offset=offset,
         )
     response.headers["X-Total-Count"] = str(total)
     return [

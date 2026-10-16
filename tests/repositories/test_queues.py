@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from domain.entities.notification import Notification
 from domain.entities.outbox import OutboxEntry
-from domain.enums import DeliveryStatus, NotificationStatus, OutboxStatus
+from domain.enums import ChannelType, DeliveryStatus, NotificationStatus, OutboxStatus
 from domain.value_objects.ids import NotificationId, OutboxEntryId, TenantId
 from tests.repositories.conftest import make_attempt, seed
 
@@ -129,6 +129,36 @@ async def test_list_for_tenant_pages_newest_first_filters_and_counts(env):
         mine, mine_total = await uow.notifications.list_for_tenant(g.tenant, limit=100)
         assert other.notification.id not in {n.id for n in mine}
         assert mine_total == len(mine)
+
+
+async def test_list_for_tenant_searches_by_event_type_recipient_and_channel(env):
+    g = await seed(env)
+    quiet = await add_notification(env, g)                    # same event, no attempts at all
+    async with env.uow() as uow:
+        await uow.delivery_attempts.add_many([make_attempt(g, ChannelType.EMAIL), make_attempt(g, ChannelType.IN_APP)])
+        await uow.commit()
+    other = await seed(env)                                   # another tenant, same event type "t.e"
+    async with env.uow() as uow:
+        await uow.delivery_attempts.add_many([make_attempt(other)])
+        await uow.commit()
+
+    async with env.uow() as uow:
+        by_event, n_event = await uow.notifications.list_for_tenant(g.tenant, event_type="t.e")
+        assert n_event == 2 and other.notification.id not in {n.id for n in by_event}
+        assert (await uow.notifications.list_for_tenant(g.tenant, event_type="no.such"))[1] == 0
+
+        by_person, n_person = await uow.notifications.list_for_tenant(g.tenant, recipient_id=g.recipient.id)
+        assert [n.id for n in by_person] == [g.notification.id] and n_person == 1   # one row despite two attempts
+
+        by_channel, _ = await uow.notifications.list_for_tenant(g.tenant, channel=ChannelType.IN_APP)
+        assert [n.id for n in by_channel] == [g.notification.id]
+        assert (await uow.notifications.list_for_tenant(g.tenant, channel=ChannelType.SMS))[1] == 0
+
+        both, _ = await uow.notifications.list_for_tenant(
+            g.tenant, event_type="t.e", recipient_id=g.recipient.id, channel=ChannelType.EMAIL
+        )
+        assert [n.id for n in both] == [g.notification.id]
+        assert quiet.id not in {n.id for n in by_person}
 
 
 # ── SKIP LOCKED (real Postgres only) ───────────────────────────────────
