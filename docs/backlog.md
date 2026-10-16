@@ -50,8 +50,8 @@
 | :--- | :--- | :--- | :--- | :--- |
 | E1 | Persistent in-app inbox ✅ | High | L | `in_app_messages` table (`is_read`, `read_at`, `is_archived`); `GET /inbox`, `POST /inbox/{id}/read`, `POST /inbox/read-all`. SSE is live-only today. |
 | E2 | Multi-step workflows ✅ | High | L | Ordered steps with delays and conditions (e.g. in-app → wait 10m → if unread, email). Builds on E1. |
-| E2b | Visual sequence builder in the console | Low | M | Steps, delays and conditions are edited as JSON today; add a form with a timeline preview. |
-| E2c | Cancel a running sequence | Low | S | Stop remaining steps for a notification (API + console button). |
+| E2b | Visual sequence builder in the console ✅ | Low | M | Step timeline with delays, conditions on a previous step and payload checks; JSON editing stays as an escape hatch. |
+| E2c | Cancel a running sequence ✅ | Low | S | `POST /notifications/{id}/cancel-sequence` (admin scope) skips the steps still waiting; button on the notification page. |
 | E3 | Digest / batching ✅ | Medium | L | `digest` step with time windows or thresholds; buffer table plus a consolidated render. |
 | E3b | Digest extras: rolling windows, daily-at-9am schedule, per-channel digests | Low | M | Today the window is fixed from the first event and covers every channel of the workflow. |
 | E4 | Template versioning & preview ✅ | Medium | M | Draft/publish, rollback, `POST /templates/{id}/preview` with sample data. |
@@ -98,7 +98,7 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 | H1 | Push error classification (retryable / permanent / failover) | High | S | [x] | Timeouts and 5xx fail over; invalid tokens do not. |
 | H2 | Deactivate stale device tokens on `UNREGISTERED` | High | S | [x] | Stop retrying dead tokens on every send. |
 | H3 | FCM per-provider app instances (no process-global init) | High | S | [x] | Credentials come from the saved provider's secrets. |
-| H4 | Unregister device endpoint | Medium | S | [ ] | `DELETE /devices`. |
+| H4 | Unregister device endpoint ✅ | Medium | S | [x] | `DELETE /devices` (by token), `DELETE /devices/{id}`, `GET /devices?recipient=`. |
 | H5 | Push payload options: notification block, TTL, priority, badge | Medium | M | [ ] | |
 | H6 | APNs driver | Medium | M | [ ] | |
 | H7 | SSE: tests for replay, ack-to-settle, no-subscriber failure, fan-out | High | S | [x] | Stream body extracted (`stream_events`); unit, API, real-Redis and real-stack tests. |
@@ -112,3 +112,14 @@ Clients pick a provider from a catalog (name + logo), configure it **once** as a
 3. **B1, B2, B4** (real delivery)
 4. **E1 → E2 → E3** (differentiating features)
 5. Everything else as capacity allows
+
+## Console (web/)
+
+| ID | Item | Pri | Effort | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| W1 | Next.js console replaces the single-file UI ✅ | High | L | Standalone Node service, decoupled from the API (`/api` proxied via `PULSE_API_ORIGIN`). All legacy pages plus Inbox and Events. |
+| W2 | Notification search ✅ | Medium | S | `GET /notifications?event_type=&recipient=&channel=&status=`; filters on the Notifications page. |
+| W3 | Overview charts ✅ | Medium | M | `GET /metrics` carries a bucketed attempts timeline; chart and provider-health table on the Overview. |
+| W4 | Console tests ✅ | Medium | M | Unit tests for the sequence conversion and Playwright smoke/flow tests (`npm run test:e2e` in `web/`); CI type-checks, lints, unit-tests and builds it. |
+| W5 | Audit cancel-sequence and device removals | Low | S | Operator actions on notifications and devices are not in the audit log (only configuration changes are). |
+| W6 | Short-lived SSE stream tokens in the console | Medium | M | Live Stream passes the tenant in the SSE URL; follows H8. |

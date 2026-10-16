@@ -187,6 +187,8 @@ make test-pg     # repository contract tests: in-memory fakes vs real Postgres, 
 make e2e         # smoke + chaos tests: real API, workers and scheduler on real Postgres + Redis
 ```
 
+Console tests live in [web/](web/): `npm run test:unit` (pure logic) and `npm run test:e2e` (Playwright against a running API and console, using the Chrome you have installed; sign in with the `make seed-admin` account).
+
 `make e2e` starts the compose Postgres and Redis, then runs `tests/e2e`: the full event → outbox → worker → delivery → settlement path, provider failover with the circuit breaker, a worker `SIGKILL`ed mid-send, and a lost queue job. Each run uses a throwaway database and Redis DB index. If port 6380 is taken by another project, use `PULSE_REDIS_PORT=6390 make e2e` with `PULSE_REDIS__PORT=6390` exported.
 
 `tests/repositories` runs each repository assertion against the in-memory fakes and, with `PULSE_PG_TESTS=1`, the real Postgres repositories, so the fakes the rest of the suite relies on stay honest. It also proves the `SKIP LOCKED` queries (outbox relay, stuck-attempt sweep, scheduler) never hand the same row to two workers.

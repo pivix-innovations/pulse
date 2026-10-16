@@ -71,7 +71,7 @@
 
 | ID | Item | Priority | Effort | Status | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **H4** | Unregister Device Endpoint | Medium | S | **[ ] OPEN** | `DELETE /api/v1/devices` (token in the body; tokens can be long) to remove a token on user logout. |
+| **H4** | Unregister Device Endpoint | Medium | S | **[x] DONE** | `DELETE /api/v1/devices` (token in the body, idempotent) for a client's logout; `GET /devices?recipient=` lists registrations with a masked token; `DELETE /devices/{id}` for the console. |
 | **H5** | Push Notification Rich Payload Options | Medium | M | **[ ] OPEN** | Support notification blocks, custom sounds, badges, priority, and TTL. |
 | **H6** | Apple Push Notification Service (APNs) | Medium | M | **[ ] OPEN** | Native APNs HTTP/2 driver using `.p8` token authentication. |
 | **H8** | Short-Lived Stream Tokens for SSE | Medium | M | **[ ] OPEN** | Replace API key in SSE URL query parameter with short-lived ticket/token. |
