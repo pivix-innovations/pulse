@@ -18,7 +18,7 @@ export const routes: RouteDef[] = [
   { path: "/providers", title: "Providers", desc: "Per-channel delivery providers", section: "Configure", icon: icons.providers },
   { path: "/preferences", title: "Preferences", desc: "Per-recipient channel opt-ins and quiet hours", section: "Configure", icon: icons.preferences },
   { path: "/suppressions", title: "Suppressions", desc: "Addresses that must not be sent to", section: "Configure", icon: icons.block },
-  { path: "/devices", title: "Devices", desc: "Register push device tokens", section: "Configure", icon: icons.devices },
+  { path: "/devices", title: "Devices", desc: "Registered push devices per recipient", section: "Configure", icon: icons.devices },
   { path: "/team", title: "Team", desc: "Who can access this tenant, and as what role", section: "Access", icon: icons.team, access: "tenantAdmin" },
   { path: "/audit-log", title: "Audit Log", desc: "Who changed what in this tenant", section: "Access", icon: icons.audit, access: "tenantAdmin" },
   { path: "/api-keys", title: "API Keys", desc: "Machine ingress credentials for this tenant", section: "Access", icon: icons.key, access: "tenantAdmin" },
