@@ -11,7 +11,7 @@ const PAGE = 20;
 
 export default function DeadLetters() {
   const [offset, setOffset] = useState(0);
-  const q = useTq(["dead-letters", offset], () => apiPage<DeadLetter>(`/dead-letters${qs({ limit: PAGE, offset })}`));
+  const q = useTq(["dead-letters", offset], () => apiPage<DeadLetter>(`/dead-letters${qs({ limit: PAGE, offset })}`), { refetchInterval: 20_000 });
   const retry = useAct((id: string) => api(`/dead-letters/${id}/retry`, { method: "POST" }),
     { ok: "Re-queued for delivery", invalidate: ["dead-letters"] });
   const items = q.data?.data ?? [];

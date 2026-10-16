@@ -12,7 +12,7 @@ const TYPES = ["workflow", "template", "provider", "api_key", "member", "suppres
 export default function AuditLog() {
   const [offset, setOffset] = useState(0);
   const [type, setType] = useState("");
-  const q = useTq<Entry[]>(["audit-log", type, offset], () => api(`/audit-log${qs({ limit: PAGE, offset, resource_type: type })}`));
+  const q = useTq<Entry[]>(["audit-log", type, offset], () => api(`/audit-log${qs({ limit: PAGE, offset, resource_type: type })}`), { refetchInterval: 30_000 });
   const items = q.data ?? [];
   return (
     <Card title="Audit log" sub="Every change to workflows, templates, providers, API keys, team members and suppressions. Request contents are never stored." flush
