@@ -39,6 +39,25 @@ jobs:
       - run: uv run ruff check .
       - run: uv run pytest -q
 
+  web:
+    name: Console (type-check, lint, unit, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      - run: node --experimental-strip-types --test lib/*.test.ts   # Node 22 needs the flag; 24+ does not
+      - run: npm run build
+
   e2e:
     name: End-to-end (real Postgres + Redis)
     runs-on: ubuntu-latest
