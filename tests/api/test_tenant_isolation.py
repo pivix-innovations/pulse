@@ -310,6 +310,17 @@ async def test_registering_the_same_device_token_in_two_tenants_keeps_them_apart
     assert len(await iso.world.uow.device_tokens.list_for_recipient(iso.b_tenant.id, b_recipient.id)) == 1
 
 
+async def test_one_tenant_cannot_list_or_remove_anothers_devices(iso):
+    body = {"external_ref": "ada", "platform": "android", "token": "ada-device-token-123456"}
+    device = (await iso.a.post("/api/v1/devices", json=body)).json()["id"]
+
+    assert (await iso.b.get("/api/v1/devices", params={"recipient": "ada"})).json() == []     # B has no "ada"
+    assert (await iso.b.delete(f"/api/v1/devices/{device}")).status_code == 404
+    assert (await iso.b.request("DELETE", "/api/v1/devices", json={"token": body["token"]})).status_code == 204  # no-op for B
+    listed = (await iso.a.get("/api/v1/devices", params={"recipient": "ada"})).json()
+    assert [d["id"] for d in listed] == [device]                  # A's registration is untouched
+
+
 async def test_a_stream_never_replays_another_tenants_notifications(iso, monkeypatch):
     import api.v1.sse as sse
     from tests.api.test_sse import _ExplodingRegistry
@@ -481,6 +492,7 @@ COVERED = {
     ("POST", "/api/v1/suppressions"),
     ("POST", "/api/v1/providers"), ("POST", "/api/v1/templates"), ("POST", "/api/v1/workflows"),
     ("POST", "/api/v1/events"), ("POST", "/api/v1/devices"), ("PUT", "/api/v1/preferences"),
+    ("GET", "/api/v1/devices"), ("DELETE", "/api/v1/devices"), ("DELETE", "/api/v1/devices/{device_id}"),   # test_one_tenant_cannot_list_or_remove...
     ("POST", "/api/v1/tenant/api-keys"), ("POST", "/api/v1/tenant/members"),
     # global, no tenant data: the catalog of supported providers
     ("GET", "/api/v1/provider-catalog"),
