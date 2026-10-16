@@ -33,7 +33,7 @@ export default function SendEvent() {
               <Field label="Source"><input name="source" required placeholder="quotient" spellCheck={false} /></Field>
             </div>
             <Field label="Payload (JSON)">
-              <textarea name="payload" rows={8} spellCheck={false} defaultValue={'{\n  "recipient_ref": "user-123",\n  "name": "Ada"\n}'} />
+              <textarea name="payload" rows={8} spellCheck={false} defaultValue={'{\n  "recipients": [\n    { "external_ref": "user-123", "email": "ada@example.com" }\n  ],\n  "name": "Ada"\n}'} />
             </Field>
             <div className="row">
               <Field label="Idempotency key (optional)"><input name="idempotency_key" placeholder="unique-key" spellCheck={false} /></Field>
