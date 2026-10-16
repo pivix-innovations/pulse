@@ -15,7 +15,7 @@ from domain.value_objects.ids import (
     TenantId,
     WorkflowId,
 )
-from services.metrics_service import MetricsService
+from services.metrics_service import MetricsService, bucket_for
 from tests.fakes import InMemoryUnitOfWork
 
 
@@ -79,3 +79,36 @@ async def test_summary_empty_tenant():
     assert summary.attempts == {}
     assert summary.dead_letters == 0
     assert summary.avg_confirmation_seconds is None
+
+
+def test_bucket_width_keeps_every_window_to_a_readable_number_of_bars():
+    assert [bucket_for(h) for h in (1, 6, 24, 168, 720)] == [60, 900, 1800, 21600, 86400]
+    assert all(h * 3600 / bucket_for(h) <= 60 for h in (1, 2, 6, 24, 72, 168, 720))
+
+
+async def test_timeline_counts_attempts_per_bucket_and_status():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    now = datetime.now(timezone.utc)
+
+    def attempt(created, status_fn=None, tenant_id=tenant):
+        a = DeliveryAttempt(id=DeliveryAttemptId.new(), tenant_id=tenant_id, notification_id=NotificationId.new(),
+                            recipient_id=RecipientId.new(), channel=ChannelType.EMAIL, created_at=created)
+        if status_fn:
+            status_fn(a)
+        uow.delivery_attempts.items[str(a.id)] = a
+
+    attempt(now - timedelta(minutes=2), lambda a: (a.mark_sent(now), a.mark_delivered(now)))
+    attempt(now - timedelta(minutes=2))                                   # pending, same bucket
+    attempt(now - timedelta(hours=5))                                     # an earlier bucket
+    attempt(now - timedelta(hours=30))                                    # outside a 24h window
+    attempt(now, tenant_id=TenantId.new())                                # another tenant
+
+    summary = await MetricsService(lambda: uow).summary(tenant, window_hours=24)
+    assert summary.bucket_seconds == 1800
+    starts = [b for b, _ in summary.timeline]
+    assert starts == sorted(starts) and len(starts) == 2
+    assert all(b.timestamp() % 1800 == 0 for b in starts)
+    assert sum(sum(c.values()) for _, c in summary.timeline) == 3
+    recent = summary.timeline[-1][1]
+    assert recent == {"delivered": 1, "pending": 1}
