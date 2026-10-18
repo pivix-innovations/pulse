@@ -29,6 +29,8 @@ def arq_redis_settings(settings: RedisSettings) -> ArqRedisSettings:
         port=settings.port,
         database=settings.db,
         password=settings.password,
+        username=settings.username,
+        ssl=settings.ssl,
     )
 
 

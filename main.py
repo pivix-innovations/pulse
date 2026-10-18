@@ -1,3 +1,4 @@
+from mangum import Mangum
 import time
 from contextlib import asynccontextmanager
 
@@ -72,6 +73,8 @@ async def lifespan(app: FastAPI):
         port=settings.redis.port,
         db=settings.redis.db,
         password=settings.redis.password,
+        username=settings.redis.username,
+        ssl=settings.redis.ssl,
     )
     app.state.sse_registry = SseConnectionRegistry(app.state.redis)
     app.state.circuit_breaker = RedisCircuitBreaker(app.state.redis, settings.breaker)
@@ -184,3 +187,7 @@ def create_app() -> FastAPI:
     return app
 
 app = create_app()
+
+
+# AWS Lambda entrypoint (API Gateway HTTP API, payload v2)
+handler = Mangum(app, lifespan="auto")

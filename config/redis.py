@@ -9,3 +9,5 @@ class RedisSettings(ConfigSection):
     port: PositiveInt = 6380
     db: int = 0
     password: str | None = None
+    username: str | None = None
+    ssl: bool = False   # True for managed Redis (e.g. Upstash, rediss://)
