@@ -15,3 +15,8 @@ wheels/
 .run/
 logs/
 .DS_Store
+.neon
+node_modules/
+.build/
+.build.zip
+undread/

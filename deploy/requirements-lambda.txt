@@ -1,0 +1,17 @@
+fastapi
+mangum
+sqlalchemy>=2.0.51
+asyncpg
+greenlet
+pydantic-settings>=2.11
+python-dotenv
+httpx
+jinja2
+markdown
+arq
+redis
+aiosmtplib
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+cryptography
