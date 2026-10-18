@@ -17,6 +17,7 @@ class DatabaseSettings(ConfigSection):
     pool_timeout: PositiveInt
     pool_recycle: PositiveInt
     pool_pre_ping: bool
+    ssl: bool = False   # True for managed Postgres (e.g. Neon)
     
     @computed_field
     @property
@@ -26,6 +27,7 @@ class DatabaseSettings(ConfigSection):
             f"{self.username}:{self.password}@"
             f"{self.host}:{self.port}/"
             f"{self.db}"
+            f"{'?ssl=require' if self.ssl else ''}"
         )
     
 
