@@ -4,18 +4,26 @@ from typing import Protocol
 
 from services.ports.repositories import (
     ApiKeyRepository,
+    AuditRepository,
+    CategoryPreferenceRepository,
     DeadLetterRepository,
+    DigestRepository,
     DeliveryAttemptRepository,
     DeviceTokenRepository,
     EventRepository,
+    InboxRepository,
     MembershipRepository,
     MetricsRepository,
     NotificationRepository,
+    OperationsRepository,
     OutboxRepository,
     PreferenceRepository,
+    ProviderCallRepository,
     ProviderRepository,
     RecipientRepository,
     SessionRepository,
+    StepRunRepository,
+    SuppressionRepository,
     TemplateRepository,
     TenantRepository,
     UserRepository,
@@ -33,15 +41,23 @@ class UnitOfWork(Protocol):
     notifications: NotificationRepository
     delivery_attempts: DeliveryAttemptRepository
     preferences: PreferenceRepository
+    suppressions: SuppressionRepository
+    audit: AuditRepository
+    category_preferences: CategoryPreferenceRepository
     events: EventRepository
     workflows: WorkflowRepository
     recipients: RecipientRepository
     outbox: OutboxRepository
+    inbox: InboxRepository
+    step_runs: StepRunRepository
+    digests: DigestRepository
     device_tokens: DeviceTokenRepository
     dead_letters: DeadLetterRepository
     templates: TemplateRepository
     providers: ProviderRepository
+    provider_calls: ProviderCallRepository
     metrics: MetricsRepository
+    operations: OperationsRepository
     tenants: TenantRepository
     users: UserRepository
     memberships: MembershipRepository

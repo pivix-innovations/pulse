@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import ProviderModel
 from domain.entities.provider import Provider
-from domain.enums import ChannelType
 from domain.value_objects.ids import ProviderId, TenantId
 
 
@@ -15,7 +14,9 @@ def _to_entity(row: ProviderModel) -> Provider:
         tenant_id=TenantId(row.tenant_id),
         channel=row.channel,
         name=row.name,
+        label=row.label or row.name,
         config=dict(row.config),
+        secrets_encrypted=row.secrets_encrypted,
         priority=row.priority,
         is_active=row.is_active,
         created_at=row.created_at,
@@ -36,7 +37,9 @@ class PostgresProviderRepository:
                 tenant_id=provider.tenant_id.value,
                 channel=provider.channel,
                 name=provider.name,
+                label=provider.label or provider.name,
                 config=provider.config,
+                secrets_encrypted=provider.secrets_encrypted,
                 priority=provider.priority,
                 is_active=provider.is_active,
             )
@@ -51,6 +54,11 @@ class PostgresProviderRepository:
         row = (await self._session.execute(stmt)).scalar_one_or_none()
         return _to_entity(row) if row else None
 
+    async def get_unscoped(self, provider_id: ProviderId) -> Provider | None:
+        """By id alone; only for webhooks, which prove themselves by signature."""
+        row = await self._session.get(ProviderModel, provider_id.value)
+        return _to_entity(row) if row else None
+
     async def list(self, tenant_id: TenantId) -> list[Provider]:
         stmt = (
             select(ProviderModel)
@@ -60,21 +68,17 @@ class PostgresProviderRepository:
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
 
-    async def get_active_by_channel(
-        self, tenant_id: TenantId, channel: ChannelType
-    ) -> Provider | None:
-        stmt = (
-            select(ProviderModel)
-            .where(
-                ProviderModel.tenant_id == tenant_id.value,
-                ProviderModel.channel == channel,
-                ProviderModel.is_active.is_(True),
-            )
-            .order_by(ProviderModel.priority.desc(), ProviderModel.created_at)
-            .limit(1)
+    async def list_by_ids(
+        self, tenant_id: TenantId, provider_ids: list[ProviderId]
+    ) -> list[Provider]:
+        if not provider_ids:
+            return []
+        stmt = select(ProviderModel).where(
+            ProviderModel.tenant_id == tenant_id.value,
+            ProviderModel.id.in_([p.value for p in provider_ids]),
         )
-        row = (await self._session.execute(stmt)).scalar_one_or_none()
-        return _to_entity(row) if row else None
+        rows = (await self._session.execute(stmt)).scalars().all()
+        return [_to_entity(row) for row in rows]
 
     async def update(self, provider: Provider) -> None:
         row = await self._session.get(ProviderModel, provider.id.value)
@@ -82,7 +86,9 @@ class PostgresProviderRepository:
             raise LookupError(f"Provider {provider.id} not found for tenant")
         row.channel = provider.channel
         row.name = provider.name
+        row.label = provider.label or provider.name
         row.config = provider.config
+        row.secrets_encrypted = provider.secrets_encrypted
         row.priority = provider.priority
         row.is_active = provider.is_active
         await self._session.flush()

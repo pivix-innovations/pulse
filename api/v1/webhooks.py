@@ -3,16 +3,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
-from api.dependencies import get_uow
-from domain.enums import DeliveryStatus
+from api.dependencies import get_secret_box, get_uow
+from providers.catalog import get_spec
+from providers.receipts import ReceiptAuthError, ReceiptParseError, parse_receipt, supports_receipts, webhook_url
 from providers.webhooks import WebhookParseError, known_provider, parse_webhook
+from domain.value_objects.ids import InvalidIdError, ProviderId
 from repositories.uow import SqlAlchemyUnitOfWork
-from services.settlement import settle_notification
+from services.secrets import SecretBox, SecretsDecryptionError, SecretsNotConfigured
+from telemetry.log_context import update_current
+from telemetry.tracing import span
+from services.receipts import apply_delivery_update, suppress_attempt_address
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -26,6 +29,77 @@ def _verify_signature(secret: str, body: bytes, signature: str | None) -> bool:
         return False
     expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature)
+
+
+@router.post("/p/{provider_id}", response_model=WebhookResult)
+async def saved_provider_webhook(
+    provider_id: str,
+    request: Request,
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
+    box: SecretBox = Depends(get_secret_box),
+) -> WebhookResult:
+    """
+    Delivery receipts for one saved provider (Twilio, Resend, SendGrid).
+    The URL names the provider; the callback is verified with *that*
+    provider's own secrets, so one tenant's callback can never touch another's.
+    Unauthenticated by design: the signature is the credential.
+    """
+    # Unknown / unsupported / unverifiable all look the same from outside.
+    not_found = HTTPException(status_code=404, detail="Unknown webhook")
+    try:
+        pid = ProviderId.from_str(provider_id)
+    except InvalidIdError:
+        raise not_found
+
+    async with uow:
+        provider = await uow.providers.get_unscoped(pid)
+        spec = get_spec(provider.channel, provider.name) if provider else None
+        if provider is None or spec is None or not supports_receipts(spec.id):
+            raise not_found
+        try:
+            secrets = box.decrypt(provider.secrets_encrypted)
+        except (SecretsNotConfigured, SecretsDecryptionError):
+            raise HTTPException(status_code=503, detail="Provider secrets unavailable")
+
+        body = await request.body()
+        try:
+            events = await parse_receipt(
+                spec.id,
+                url=webhook_url(request.app.state.settings.api.public_url, pid),
+                headers={k.lower(): v for k, v in request.headers.items()},
+                body=body,
+                config=provider.config,
+                secrets=secrets,
+                options={
+                    "allow_insecure_sns": request.app.state.settings.webhook.allow_insecure_sns
+                },
+            )
+        except ReceiptAuthError:
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        except ReceiptParseError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+
+        processed = 0
+        for event in events:
+            attempt = await uow.delivery_attempts.get_by_provider_message_id(
+                provider.tenant_id, provider.id, event.provider_message_id, for_update=True
+            )
+            if attempt is None:
+                continue   # normal: the account also sends mail Pulse doesn't know about; answer 200 so the hook stays on
+            update_current(
+                tenant_id=attempt.tenant_id, notification_id=attempt.notification_id, attempt_id=attempt.id
+            )
+            # Continue the trace of the request that created this message.
+            with span(
+                "webhook.receipt", parent=attempt.traceparent,
+                attributes={"pulse.attempt_id": str(attempt.id), "pulse.delivered": event.delivered},
+            ):
+                if event.suppress:
+                    await suppress_attempt_address(uow, attempt, event.suppress, event.reason)
+                if await apply_delivery_update(uow, attempt, delivered=event.delivered, reason=event.reason):
+                    processed += 1
+        await uow.commit()
+    return WebhookResult(processed=processed)
 
 
 @router.post("/{provider}", response_model=WebhookResult)
@@ -63,19 +137,10 @@ async def provider_webhook(
             )
             if attempt is None:
                 continue
-            if update.delivered:
-                if attempt.status is DeliveryStatus.DELIVERED:
-                    processed += 1  # idempotent replay
-                    continue
-                if attempt.status is not DeliveryStatus.SENT:
-                    continue
-                attempt.mark_delivered(datetime.now(timezone.utc))
-            else:
-                if attempt.status is not DeliveryStatus.SENT:
-                    continue
-                attempt.mark_failed(update.reason or "provider reported failure")
-            await uow.delivery_attempts.update(attempt)
-            await settle_notification(uow, attempt.tenant_id, attempt.notification_id)
+            if not await apply_delivery_update(
+                uow, attempt, delivered=update.delivered, reason=update.reason
+            ):
+                continue
             processed += 1
         await uow.commit()
     return WebhookResult(processed=processed)

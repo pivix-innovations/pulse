@@ -10,7 +10,8 @@ PORT  ?= 9000
 RUN_DIR := .run
 LOG_DIR := logs
 
-SERVICES := api email-worker push-worker sms-worker scheduler
+SERVICES := api email-worker push-worker sms-worker scheduler web
+WEB_PORT ?= 3100
 
 .DEFAULT_GOAL := help
 
@@ -28,9 +29,31 @@ migrate: ## Apply database migrations
 revision: ## Create a new migration: make revision m="add foo"
 	$(UV) alembic revision --autogenerate -m "$(m)"
 
+.PHONY: o2-apply
+o2-apply: ## Create/update the OpenObserve alert rules and dashboard (see docs/observability.md)
+	$(UV) python -m scripts.apply_openobserve
+
 .PHONY: seed-admin
 seed-admin: ## Bootstrap the first platform admin + tenant (idempotent)
 	$(UV) python -m scripts.seed_admin $(if $(email),$(email)) $(if $(password),$(password)) $(if $(tenant),$(tenant))
+
+# ── Console (Next.js, web/) ───────────────────────────────────────────
+
+.PHONY: web-install
+web-install: ## Install console dependencies
+	cd web && npm install
+
+.PHONY: web
+web: ## Run the Next.js console (dev) on :$(WEB_PORT), proxying /api to the Pulse API on :$(PORT)
+	cd web && PULSE_API_ORIGIN=http://localhost:$(PORT) npm run dev -- -p $(WEB_PORT)
+
+.PHONY: web-build-if-missing
+web-build-if-missing:
+	@test -d web/.next || $(MAKE) --no-print-directory web-install web-build
+
+.PHONY: web-build
+web-build: ## Type-check, lint and production-build the console
+	cd web && npx tsc --noEmit && npm run lint && npm run build
 
 # ── Infrastructure (Postgres + Redis) ─────────────────────────────────
 
@@ -79,10 +102,10 @@ workers: ## Run all workers in the background (no API)
 # ── Full stack (background) ───────────────────────────────────────────
 
 .PHONY: start
-start: infra-up migrate ## Start everything: infra, migrations, API + all workers (background)
+start: infra-up migrate web-build-if-missing ## Start everything: infra, migrations, API + all workers (background)
 	@$(MAKE) --no-print-directory $(addprefix start-,$(SERVICES))
 	@echo
-	@echo "Pulse is up → http://localhost:$(PORT)/ui/  (logs in $(LOG_DIR)/, stop with 'make stop')"
+	@echo "Pulse API → http://localhost:$(PORT)   Console → http://localhost:$(WEB_PORT)  (logs in $(LOG_DIR)/, stop with 'make stop')"
 
 .PHONY: stop
 stop: ## Stop background API + workers (leaves infra running; use infra-down for that)
@@ -124,6 +147,7 @@ CMD_email-worker := $(UV) arq workers.email_worker.WorkerSettings
 CMD_push-worker  := $(UV) arq workers.push_worker.WorkerSettings
 CMD_sms-worker   := $(UV) arq workers.sms_worker.WorkerSettings
 CMD_scheduler    := $(UV) python -m workers.scheduler_worker
+CMD_web          := sh -c "cd web && PULSE_API_ORIGIN=http://localhost:$(PORT) exec node_modules/.bin/next start -p $(WEB_PORT)"
 
 start-%:
 	@mkdir -p $(RUN_DIR) $(LOG_DIR)
@@ -146,6 +170,14 @@ test: ## Run the test suite
 lint: ## Lint (ruff) and type-check (ty)
 	$(UV) ruff check .
 	$(UV) ty check
+
+.PHONY: test-pg
+test-pg: infra-up ## Repository contract tests against real Postgres (memory fakes + SQL, SKIP LOCKED)
+	PULSE_PG_TESTS=1 $(UV) pytest tests/repositories -v
+
+.PHONY: e2e
+e2e: infra-up ## End-to-end smoke + chaos tests on real Postgres/Redis (set PULSE_REDIS__PORT if 6380 is taken)
+	PULSE_E2E=1 $(UV) pytest tests/e2e -v
 
 .PHONY: fmt
 fmt: ## Format code (black + ruff --fix)

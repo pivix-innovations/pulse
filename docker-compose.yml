@@ -7,7 +7,7 @@ services:
         - POSTGRES_PASSWORD=postgres
         - POSTGRES_DB=pulsedb
       ports:
-        - '5423:5432'
+        - '${PULSE_DB_PORT:-5423}:5432'
       volumes:
         - postgres_data:/var/lib/postgresql/data
 
@@ -15,10 +15,38 @@ services:
       image: redis:7-alpine
       restart: always
       ports:
-        - '6380:6379'
+        - '${PULSE_REDIS_PORT:-6380}:6379'
       volumes:
         - redis_data:/data
 
+  # Metrics/traces backend (OTLP). Opt in:  docker compose --profile observability up -d openobserve
+  # Console: http://localhost:5080  (dev credentials below; change for anything shared)
+  openobserve:
+      image: o2cr.ai/openobserve/openobserve-enterprise:v1.0.4
+      profiles: ['observability']
+      restart: unless-stopped
+      environment:
+        - ZO_ROOT_USER_EMAIL=${PULSE_O2_EMAIL:-admin@pulse.local}
+        - ZO_ROOT_USER_PASSWORD=${PULSE_O2_PASSWORD:-Pulse-Dev-2026!}
+        - ZO_DATA_DIR=/data
+      ports:
+        - '${PULSE_O2_PORT:-5080}:5080'
+      volumes:
+        - openobserve_data:/data
+
+  # The console. Opt in:  docker compose --profile app up -d --build web
+  # Rewrites are compiled in: set PULSE_API_ORIGIN to where this container reaches the API.
+  web:
+      build:
+        context: ./web
+        args:
+          PULSE_API_ORIGIN: ${PULSE_API_ORIGIN:-http://host.docker.internal:9000}
+      profiles: ['app']
+      restart: unless-stopped
+      ports:
+        - '${PULSE_WEB_PORT:-3100}:3100'
+
 volumes:
+  openobserve_data:
   postgres_data:
   redis_data:

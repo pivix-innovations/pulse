@@ -79,6 +79,31 @@ class DeviceTokenId(_Id):
 
 
 @dataclass(frozen=True, slots=True)
+class TemplateVersionId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DigestBatchId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class DigestItemId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class StepRunId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class InboxMessageId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class OutboxEntryId(_Id):
     pass
 
@@ -104,4 +129,19 @@ class ApiKeyId(_Id):
 
 @dataclass(frozen=True, slots=True)
 class SessionId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class SuppressionId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class AuditEntryId(_Id):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CategoryPreferenceId(_Id):
     pass

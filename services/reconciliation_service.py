@@ -12,6 +12,8 @@ from domain.value_objects.ids import DeadLetterId, DeliveryAttemptId, OutboxEntr
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from services.rendering_service import RenderingService
 from services.settlement import settle_notification
+from services.send_policy import blocked_reason
+from services.templates import TemplateUnavailable, resolve
 from workflows.registry import WorkflowDefinition
 
 logger = logging.getLogger(__name__)
@@ -64,7 +66,12 @@ class ReconciliationService:
                 stale_failed = await uow.delivery_attempts.list_stale(
                     DeliveryStatus.FAILED, channel, now, self._settings.batch_size
                 )
-                for attempt in (*stale_sent, *stale_failed):
+                for attempt in stale_sent:
+                    if await uow.step_runs.has_open(attempt.notification_id):
+                        continue   # a sequence is still running: its next step may be the answer
+                    await self._reconcile(uow, attempt)
+                    handled += 1
+                for attempt in stale_failed:
                     await self._reconcile(uow, attempt)
                     handled += 1
             handled += await self._requeue_stuck(uow, now)
@@ -174,6 +181,19 @@ class ReconciliationService:
             )
             return False
 
+        blocked = await blocked_reason(
+            uow, source.tenant_id, recipient, fallback_channel, definition.category
+        )
+        if blocked:
+            logger.info("Not escalating attempt %s to '%s': %s", source.id, fallback_channel.value, blocked)
+            return False
+
+        try:
+            template = await resolve(uow, source.tenant_id, template, recipient.locale)
+        except TemplateUnavailable as exc:
+            # One bad template must not wedge the sweep: treat the fallback as unusable.
+            logger.warning("Cannot escalate attempt %s to '%s': %s", source.id, fallback_channel.value, exc)
+            return False
         rendered = self._rendering.render(
             body=template.body,
             subject=template.subject,

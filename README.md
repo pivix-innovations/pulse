@@ -169,6 +169,32 @@ pulse/
 └── tests/
 ```
 
+## In-app inbox
+
+In-app messages are stored per recipient and also pushed live over SSE. Clients list, count, read and archive them
+through `/api/v1/inbox`. See [docs/inbox.md](docs/inbox.md).
+
+## Observability
+
+Metrics are exported with OpenTelemetry over OTLP; OpenObserve is the reference backend. See
+[docs/observability.md](docs/observability.md) for setup, the metric catalogue and suggested alerts.
+
+## Testing
+
+```bash
+make test        # unit + API tests, in-memory fakes, no services needed
+make test-pg     # repository contract tests: in-memory fakes vs real Postgres, incl. SKIP LOCKED
+make e2e         # smoke + chaos tests: real API, workers and scheduler on real Postgres + Redis
+```
+
+Console tests live in [web/](web/): `npm run test:unit` (pure logic) and `npm run test:e2e` (Playwright against a running API and console, using the Chrome you have installed; sign in with the `make seed-admin` account).
+
+`make e2e` starts the compose Postgres and Redis, then runs `tests/e2e`: the full event → outbox → worker → delivery → settlement path, provider failover with the circuit breaker, a worker `SIGKILL`ed mid-send, and a lost queue job. Each run uses a throwaway database and Redis DB index. If port 6380 is taken by another project, use `PULSE_REDIS_PORT=6390 make e2e` with `PULSE_REDIS__PORT=6390` exported.
+
+`tests/repositories` runs each repository assertion against the in-memory fakes and, with `PULSE_PG_TESTS=1`, the real Postgres repositories, so the fakes the rest of the suite relies on stay honest. It also proves the `SKIP LOCKED` queries (outbox relay, stuck-attempt sweep, scheduler) never hand the same row to two workers.
+
+`tests/integration` checks SES events against real SNS signatures with LocalStack (`LOCALSTACK_URL=http://localhost:4566`). CI (`.github/workflows/ci.yml`) runs lint, unit tests and the e2e suite.
+
 ## Getting started
 
 Requires Python >= 3.10, [uv](https://docs.astral.sh/uv/), and Docker.
@@ -209,7 +235,7 @@ uv run uvicorn main:app --reload --port 9000
 
 ### Admin console
 
-A zero-build admin UI ([ui/index.html](ui/index.html)) is served by the API at [http://localhost:9000/ui/](http://localhost:9000/ui/) (`/` redirects there). Sign in with a seeded or invited account; a tenant switcher in the top bar picks the tenant you act on. It covers metrics, event ingestion, notification/delivery inspection with client acks, a live SSE stream viewer, CRUD for workflows/templates/providers/preferences/devices, and — role-permitting — team membership, API keys, and platform-wide tenant/user administration.
+The admin console is a separate Next.js app in [web/](web/) (see [web/README.md](web/README.md)); the API serves no UI. `make web` runs it in development on [http://localhost:3100](http://localhost:3100), and `make start` builds and runs it as a Node service beside the API. It proxies `/api` to the API (`PULSE_API_ORIGIN`), so the two deploy independently. Sign in with a seeded or invited account; a tenant switcher in the top bar picks the tenant you act on. It covers metrics, event ingestion, notification/delivery inspection with client acks, a live SSE stream viewer, the recipient inbox, CRUD for workflows/templates/providers/preferences/devices, and — role-permitting — team membership, API keys, and platform-wide tenant/user administration.
 
 ## Identity & multi-tenancy
 

@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from config.base import EnvironmentSettings
+from config.breaker import BreakerSettings
 from config.app import AppSettings
 from config.api import ApiSettings
 from config.email import EmailSettings
 from config.logging import LoggingSettings
+from config.observability import ObservabilitySettings
 from config.database import DatabaseSettings
 from config.outbox import OutboxSettings
 from config.push import PushSettings
+from config.ratelimit import RateLimitSettings
 from config.reconciliation import ReconciliationSettings
 from config.redis import RedisSettings
 from config.retry import RetrySettings
 from config.security import SecuritySettings
+from config.sentinel import SentinelSettings
 from config.webhook import WebhookSettings
 
 
@@ -28,5 +32,9 @@ class Settings(EnvironmentSettings):
     outbox: OutboxSettings = OutboxSettings()
     push: PushSettings = PushSettings()
     retry: RetrySettings = RetrySettings()
+    breaker: BreakerSettings = BreakerSettings()
+    otel: ObservabilitySettings = ObservabilitySettings()
+    rate_limit: RateLimitSettings = RateLimitSettings()
+    sentinel: SentinelSettings = SentinelSettings()
     reconciliation: ReconciliationSettings = ReconciliationSettings()
     webhook: WebhookSettings = WebhookSettings()

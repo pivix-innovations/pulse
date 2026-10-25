@@ -1,5 +1,6 @@
 from database.models.base import Base
 from database.models.dead_letter import DeadLetterModel
+from database.models.digest import DigestBatchModel, DigestItemModel
 from database.models.delivery import DeliveryAttemptModel
 from database.models.device import DeviceTokenModel
 from database.models.event import EventModel
@@ -10,30 +11,45 @@ from database.models.identity import (
     TenantModel,
     UserModel,
 )
+from database.models.audit import AuditLogModel
+from database.models.category_preference import CategoryPreferenceModel
+from database.models.inbox import InboxMessageModel
 from database.models.notification import NotificationModel
 from database.models.outbox import OutboxEntryModel
 from database.models.preference import PreferenceModel
 from database.models.provider import ProviderModel
+from database.models.provider_call import ProviderCallModel
 from database.models.recipient import RecipientModel
-from database.models.template import TemplateModel
+from database.models.suppression import SuppressionModel
+from database.models.template import TemplateModel, TemplateVersionModel
+from database.models.step_run import WorkflowStepRunModel
 from database.models.workflow import WorkflowModel
 
 __all__ = [
     "ApiKeyModel",
+    "AuditLogModel",
+    "CategoryPreferenceModel",
     "Base",
     "DeadLetterModel",
     "DeliveryAttemptModel",
+    "DigestBatchModel",
+    "DigestItemModel",
     "DeviceTokenModel",
     "EventModel",
+    "InboxMessageModel",
     "MembershipModel",
     "NotificationModel",
     "OutboxEntryModel",
     "PreferenceModel",
+    "ProviderCallModel",
     "ProviderModel",
     "RecipientModel",
     "SessionModel",
+    "SuppressionModel",
     "TemplateModel",
+    "TemplateVersionModel",
     "TenantModel",
     "UserModel",
     "WorkflowModel",
+    "WorkflowStepRunModel",
 ]

@@ -5,7 +5,7 @@ import secrets
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_uow, require_platform_admin
@@ -31,6 +31,10 @@ class TenantIn(BaseModel):
 class TenantPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     is_active: bool | None = None
+    # Ingress limits for POST /events. Send null to go back to the platform default.
+    rate_limit_per_second: float | None = Field(default=None, gt=0, le=100_000)
+    rate_burst: int | None = Field(default=None, ge=1, le=1_000_000)
+    daily_quota: int | None = Field(default=None, ge=1)
 
 
 class TenantOut(BaseModel):
@@ -38,12 +42,17 @@ class TenantOut(BaseModel):
     name: str
     slug: str
     is_active: bool
+    rate_limit_per_second: float | None = None
+    rate_burst: int | None = None
+    daily_quota: int | None = None
     created_at: datetime | None
 
 
 def _tenant_out(t: Tenant) -> TenantOut:
     return TenantOut(
-        id=t.id.value, name=t.name, slug=t.slug, is_active=t.is_active, created_at=t.created_at
+        id=t.id.value, name=t.name, slug=t.slug, is_active=t.is_active,
+        rate_limit_per_second=t.rate_limit_per_second, rate_burst=t.rate_burst,
+        daily_quota=t.daily_quota, created_at=t.created_at,
     )
 
 
@@ -66,7 +75,10 @@ async def create_tenant(
 
 @router.patch("/tenants/{tenant_id}", response_model=TenantOut)
 async def update_tenant(
-    tenant_id: uuid.UUID, body: TenantPatch, uow: SqlAlchemyUnitOfWork = Depends(get_uow)
+    tenant_id: uuid.UUID,
+    body: TenantPatch,
+    request: Request,
+    uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> TenantOut:
     async with uow:
         tenant = await uow.tenants.get(TenantId(tenant_id))
@@ -76,8 +88,15 @@ async def update_tenant(
             tenant.name = body.name
         if body.is_active is not None:
             tenant.is_active = body.is_active
+        # Limits: omitted = unchanged, null = back to the platform default.
+        for field in ("rate_limit_per_second", "rate_burst", "daily_quota"):
+            if field in body.model_fields_set:
+                setattr(tenant, field, getattr(body, field))
         await uow.tenants.update(tenant)
         await uow.commit()
+        limiter = getattr(request.app.state, "rate_limit_service", None)
+        if limiter is not None:
+            limiter.forget(tenant.id)
         return _tenant_out(await uow.tenants.get(tenant.id))
 
 

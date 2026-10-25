@@ -229,3 +229,32 @@ async def test_sweep_requeues_stuck_in_doubt_attempt():
     assert attempt.status is DeliveryStatus.PENDING
     topics = [e.topic for e in uow.outbox.items.values()]
     assert topics == ["deliver.email"]
+
+
+async def test_escalation_respects_opt_outs_and_suppression():
+    from domain.entities.preference import Preference
+    from domain.entities.suppression import Suppression, SuppressionReason
+    from domain.value_objects.ids import PreferenceId, SuppressionId
+
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    _, recipient, notification = seed_world(uow, tenant)
+    # The welcome workflow escalates push -> sms, but this person turned SMS off and the number is suppressed.
+    await uow.preferences.upsert(Preference(
+        id=PreferenceId.new(), tenant_id=tenant, recipient_id=recipient.id, channel=ChannelType.SMS, opted_in=False,
+    ))
+    push = seed_attempt(uow, tenant, notification, recipient, ChannelType.PUSH, DeliveryStatus.SENT)
+
+    await make_sweep(uow).sweep_once()
+    assert await uow.delivery_attempts.get_by_dispatch(notification.id, recipient.id, ChannelType.SMS) is None
+    assert push.status is not DeliveryStatus.SENT                      # gave up instead of escalating
+
+    uow2 = InMemoryUnitOfWork()
+    _, recipient2, notification2 = seed_world(uow2, tenant)
+    await uow2.suppressions.add(Suppression(
+        id=SuppressionId.new(), tenant_id=tenant, channel=ChannelType.SMS, address=recipient2.phone,
+        reason=SuppressionReason.COMPLAINT,
+    ))
+    seed_attempt(uow2, tenant, notification2, recipient2, ChannelType.PUSH, DeliveryStatus.SENT)
+    await make_sweep(uow2).sweep_once()
+    assert await uow2.delivery_attempts.get_by_dispatch(notification2.id, recipient2.id, ChannelType.SMS) is None

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import DeviceTokenModel
@@ -73,3 +73,25 @@ class PostgresDeviceTokenRepository:
         )
         rows = (await self._session.execute(stmt)).scalars().all()
         return [_to_entity(row) for row in rows]
+
+    async def delete_tokens(self, tenant_id: TenantId, tokens: list[str]) -> int:
+        if not tokens:
+            return 0
+        result = await self._session.execute(
+            delete(DeviceTokenModel).where(
+                DeviceTokenModel.tenant_id == tenant_id.value,
+                DeviceTokenModel.token.in_(tokens),
+            )
+        )
+        await self._session.flush()
+        return result.rowcount or 0
+
+    async def delete(self, tenant_id: TenantId, device_id: DeviceTokenId) -> bool:
+        result = await self._session.execute(
+            delete(DeviceTokenModel).where(
+                DeviceTokenModel.tenant_id == tenant_id.value,
+                DeviceTokenModel.id == device_id.value,
+            )
+        )
+        await self._session.flush()
+        return bool(result.rowcount)

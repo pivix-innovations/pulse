@@ -1,0 +1,551 @@
+{
+  "title": "Pulse overview",
+  "description": "Pipeline health, delivery outcomes, providers and API. Imported by scripts/apply_openobserve.py.",
+  "version": 5,
+  "role": "",
+  "owner": "",
+  "tabs": [
+    {
+      "tabId": "overview",
+      "name": "Overview",
+      "panels": [
+        {
+          "id": "p1",
+          "type": "line",
+          "title": "Outbox lag (s)",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(pulse_outbox_oldest_age)",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_outbox_oldest_age",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 8,
+            "i": 1
+          }
+        },
+        {
+          "id": "p2",
+          "type": "line",
+          "title": "Outbox pending",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(pulse_outbox_pending)",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_outbox_pending",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 8,
+            "i": 2
+          }
+        },
+        {
+          "id": "p3",
+          "type": "line",
+          "title": "Stuck attempts",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max(pulse_attempts_stuck)",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_attempts_stuck",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 8,
+            "w": 24,
+            "h": 8,
+            "i": 3
+          }
+        },
+        {
+          "id": "p4",
+          "type": "line",
+          "title": "Queue depth",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "max by (queue) (pulse_queue_depth)",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_queue_depth",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{queue}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 8,
+            "w": 24,
+            "h": 8,
+            "i": 4
+          }
+        },
+        {
+          "id": "p5",
+          "type": "line",
+          "title": "Events ingested / s",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(rate(pulse_events_ingested[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_events_ingested",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 16,
+            "w": 24,
+            "h": 8,
+            "i": 5
+          }
+        },
+        {
+          "id": "p6",
+          "type": "line",
+          "title": "Deliveries / s by outcome",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (outcome) (rate(pulse_deliveries[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_deliveries",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{outcome}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 16,
+            "w": 24,
+            "h": 8,
+            "i": 6
+          }
+        },
+        {
+          "id": "p7",
+          "type": "line",
+          "title": "Dead letters (15 min)",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "increase(pulse_dead_letters[15m])",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_dead_letters",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 24,
+            "w": 24,
+            "h": 8,
+            "i": 7
+          }
+        },
+        {
+          "id": "p8",
+          "type": "line",
+          "title": "Provider error ratio",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (provider) (rate(pulse_provider_calls{outcome=\"provider_error\"}[5m])) / sum by (provider) (rate(pulse_provider_calls[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_provider_calls",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{provider}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 24,
+            "w": 24,
+            "h": 8,
+            "i": 8
+          }
+        },
+        {
+          "id": "p9",
+          "type": "line",
+          "title": "Provider p95 latency (ms)",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "histogram_quantile(0.95, sum by (provider, le) (rate(pulse_provider_duration_bucket[5m])))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_provider_duration_bucket",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{provider}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 32,
+            "w": 24,
+            "h": 8,
+            "i": 9
+          }
+        },
+        {
+          "id": "p10",
+          "type": "line",
+          "title": "API 5xx / s",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum(rate(pulse_http_server_duration_count{status_class=\"5xx\"}[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_http_server_duration_count",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 32,
+            "w": 24,
+            "h": 8,
+            "i": 10
+          }
+        },
+        {
+          "id": "p11",
+          "type": "line",
+          "title": "Rate-limited requests / s",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (reason) (rate(pulse_ratelimit_rejected[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_ratelimit_rejected",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{reason}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 0,
+            "y": 40,
+            "w": 24,
+            "h": 8,
+            "i": 11
+          }
+        },
+        {
+          "id": "p12",
+          "type": "line",
+          "title": "Sends skipped (suppressed) / s",
+          "description": "",
+          "config": {
+            "show_legends": true,
+            "legends_position": null
+          },
+          "queryType": "promql",
+          "queries": [
+            {
+              "query": "sum by (channel) (rate(pulse_suppressed_sends[5m]))",
+              "customQuery": true,
+              "fields": {
+                "stream": "pulse_suppressed_sends",
+                "stream_type": "metrics",
+                "x": [],
+                "y": [],
+                "z": [],
+                "filter": {
+                  "filterType": "group",
+                  "logicalOperator": "AND",
+                  "conditions": []
+                }
+              },
+              "config": {
+                "promql_legend": "{channel}",
+                "layer_type": "scatter",
+                "weight_fixed": 1,
+                "limit": 0,
+                "min": 0,
+                "max": 100
+              }
+            }
+          ],
+          "layout": {
+            "x": 24,
+            "y": 40,
+            "w": 24,
+            "h": 8,
+            "i": 12
+          }
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "list": [],
+    "showDynamicFilters": false
+  },
+  "defaultDatetimeDuration": {
+    "type": "relative",
+    "relativeTimePeriod": "1h"
+  }
+}

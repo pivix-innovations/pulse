@@ -36,6 +36,15 @@ class SmtpEmailProvider(EmailProvider):
                 password=self._settings.smtp_password,
                 start_tls=self._settings.smtp_use_tls,
             )
+        except (aiosmtplib.SMTPRecipientRefused, aiosmtplib.SMTPRecipientsRefused) as exc:
+            # The address is bad; another SMTP relay would refuse it too.
+            raise ProviderSendError(
+                f"SMTP recipient refused: {exc}", retryable=False, failover=False
+            ) from exc
+        except aiosmtplib.SMTPAuthenticationError as exc:
+            raise ProviderSendError(f"SMTP authentication failed: {exc}", retryable=False) from exc
         except aiosmtplib.SMTPException as exc:
             raise ProviderSendError(f"SMTP send failed: {exc}") from exc
+        except OSError as exc:  # connection refused / unreachable / timeout
+            raise ProviderSendError(f"SMTP connection failed: {exc}") from exc
         return SendResult(provider_message_id=email["Message-ID"] or response)

@@ -266,35 +266,40 @@ async def test_fire_and_forget_send_settles_notification_immediately():
     assert notification.status is NotificationStatus.COMPLETED
 
 
-async def test_provider_registry_prefers_tenant_row_and_falls_back_to_default():
-    from config.settings import Settings
-    from domain.entities.provider import Provider
-    from domain.value_objects.ids import ProviderId
-    from providers.registry import ProviderRegistry
+# ── in-app: the inbox is the record, the live push is best effort ─────
 
+
+async def test_in_app_delivery_stores_the_message_before_pushing_it():
     uow = InMemoryUnitOfWork()
     tenant = TenantId.new()
-    registry = ProviderRegistry(Settings())
+    attempt = seed_attempt(uow, tenant, ChannelType.IN_APP)
+    provider = FakeProvider(ChannelType.IN_APP)
 
-    default, default_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert default_id is None and default.name == "console"
+    assert await make_service(uow, provider).deliver(tenant, attempt.id) == "sent"
 
-    row = Provider(
-        id=ProviderId.new(),
-        tenant_id=tenant,
-        channel=ChannelType.EMAIL,
-        name="smtp",
-        config={"smtp_host": "mail.tenant.test", "from_address": "x@tenant.test"},
-    )
-    await uow.providers.add(row)
-    stored, stored_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert stored_id == row.id and stored.name == "smtp"
-    assert stored._settings.smtp_host == "mail.tenant.test"
+    [stored] = uow.inbox.items.values()
+    assert (stored.title, stored.body, stored.attempt_id) == ("hi", "hello", attempt.id)
+    assert stored.recipient_id == attempt.recipient_id and not stored.is_read
+    # the live event carries the inbox id so a client can mark exactly that message read
+    assert provider.sent[0].metadata["inbox_id"] == str(stored.id)
 
-    # Another tenant is unaffected; an unknown driver name falls back.
-    _, other_id = await registry.resolve(uow, TenantId.new(), ChannelType.EMAIL)
-    assert other_id is None
-    row.name = "nope"
-    row.updated_at = datetime.now(timezone.utc)
-    fallback, fallback_id = await registry.resolve(uow, tenant, ChannelType.EMAIL)
-    assert fallback_id is None and fallback.name == "console"
+
+async def test_a_redelivered_in_app_job_does_not_duplicate_the_message():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant, ChannelType.IN_APP)
+    provider = FakeProvider(ChannelType.IN_APP, error=ProviderSendError("redis blip", retryable=True))
+    service = make_service(uow, provider)
+
+    assert await service.deliver(tenant, attempt.id) == "retrying"   # push failed, message already stored
+    provider.error = None
+    assert await service.deliver(tenant, attempt.id) == "sent"
+    assert len(uow.inbox.items) == 1
+
+
+async def test_other_channels_never_touch_the_inbox():
+    uow = InMemoryUnitOfWork()
+    tenant = TenantId.new()
+    attempt = seed_attempt(uow, tenant, ChannelType.EMAIL)
+    await make_service(uow, FakeProvider()).deliver(tenant, attempt.id)
+    assert uow.inbox.items == {}

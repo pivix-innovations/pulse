@@ -7,10 +7,12 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_uow, require_tenant
+from api.dependencies import get_uow, require_scope
 from domain.entities.workflow import Workflow
-from domain.value_objects.ids import TenantId, WorkflowId
+from domain.enums import ChannelType
+from domain.value_objects.ids import InvalidIdError, ProviderId, TenantId, WorkflowId
 from repositories.uow import SqlAlchemyUnitOfWork
+from services import templates as svc_templates
 from workflows.registry import WorkflowDefinition
 
 router = APIRouter(prefix="/workflows", tags=["workflows"])
@@ -47,6 +49,15 @@ def _validate_definition(body: WorkflowIn) -> None:
         parsed = WorkflowDefinition.from_dict(body.name, body.event_type, body.definition)
     except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=f"Invalid workflow definition: {exc}")
+    if parsed.digest is not None and parsed.is_sequence:
+        raise HTTPException(status_code=422, detail="A workflow can be a digest or a sequence, not both")
+    if parsed.is_sequence:
+        if parsed.channels or parsed.fallbacks or parsed.fallback_templates:
+            raise HTTPException(
+                status_code=422,
+                detail="A workflow uses either 'steps' or 'channels' with fallbacks, not both",
+            )
+        return
     if not parsed.channels:
         raise HTTPException(status_code=422, detail="Workflow definition needs at least one channel")
     known = {ct.channel.value for ct in (*parsed.channels, *parsed.fallback_templates)}
@@ -58,15 +69,73 @@ def _validate_definition(body: WorkflowIn) -> None:
             )
 
 
+async def _validate_template_refs(
+    uow: SqlAlchemyUnitOfWork, tenant_id: TenantId, definition: dict[str, Any]
+) -> None:
+    """Every `template` reference must name one of the tenant's active, published templates for that channel."""
+    for name, channel in sorted(svc_templates.references(definition)):
+        found = await uow.templates.find(tenant_id, name, ChannelType(channel))
+        if not found:
+            raise HTTPException(status_code=422, detail=f"Unknown template '{name}' for channel '{channel}'")
+        if not any(t.is_active and t.published_version is not None for t in found):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Template '{name}' ({channel}) has no published version (or is inactive); publish it first",
+            )
+
+
+async def _validate_provider_chains(
+    uow: SqlAlchemyUnitOfWork, tenant_id: TenantId, definition: dict[str, Any]
+) -> None:
+    """
+    `provider_chains` maps a channel to saved provider ids in priority order
+    (first is tried first). Every id must be one of the tenant's providers
+    for that very channel, listed once.
+    """
+    chains = definition.get("provider_chains")
+    if chains is None:
+        return
+    if not isinstance(chains, dict):
+        raise HTTPException(status_code=422, detail="provider_chains must be an object")
+    for channel_raw, ids in chains.items():
+        try:
+            channel = ChannelType(channel_raw)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"provider_chains: unknown channel '{channel_raw}'")
+        if not isinstance(ids, list) or len(set(map(str, ids))) != len(ids):
+            raise HTTPException(
+                status_code=422,
+                detail=f"provider_chains.{channel_raw} must be a list of distinct provider ids",
+            )
+        try:
+            wanted = [ProviderId.from_str(str(i)) for i in ids]
+        except InvalidIdError as exc:
+            raise HTTPException(status_code=422, detail=f"provider_chains.{channel_raw}: {exc}")
+        found = {p.id: p for p in await uow.providers.list_by_ids(tenant_id, wanted)}
+        for pid in wanted:
+            provider = found.get(pid)
+            if provider is None:
+                raise HTTPException(
+                    status_code=422, detail=f"provider_chains.{channel_raw}: unknown provider {pid}"
+                )
+            if provider.channel is not channel:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"provider_chains.{channel_raw}: '{provider.label or provider.name}' is a {provider.channel.value} provider",
+                )
+
+
 @router.post("", response_model=WorkflowOut, status_code=201)
 async def create_workflow(
     body: WorkflowIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     _validate_definition(body)
     workflow = Workflow(id=WorkflowId.new(), tenant_id=tenant_id, **body.model_dump())
     async with uow:
+        await _validate_provider_chains(uow, tenant_id, body.definition)
+        await _validate_template_refs(uow, tenant_id, body.definition)
         await uow.workflows.add(workflow)
         await uow.commit()
         return _out(await uow.workflows.get(tenant_id, workflow.id))
@@ -74,7 +143,7 @@ async def create_workflow(
 
 @router.get("", response_model=list[WorkflowOut])
 async def list_workflows(
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> list[WorkflowOut]:
     async with uow:
@@ -84,7 +153,7 @@ async def list_workflows(
 @router.get("/{workflow_id}", response_model=WorkflowOut)
 async def get_workflow(
     workflow_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("read")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     async with uow:
@@ -98,7 +167,7 @@ async def get_workflow(
 async def update_workflow(
     workflow_id: uuid.UUID,
     body: WorkflowIn,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> WorkflowOut:
     _validate_definition(body)
@@ -106,6 +175,8 @@ async def update_workflow(
         existing = await uow.workflows.get(tenant_id, WorkflowId(workflow_id))
         if existing is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
+        await _validate_provider_chains(uow, tenant_id, body.definition)
+        await _validate_template_refs(uow, tenant_id, body.definition)
         updated = Workflow(id=existing.id, tenant_id=tenant_id, **body.model_dump())
         await uow.workflows.update(updated)
         await uow.commit()
@@ -115,7 +186,7 @@ async def update_workflow(
 @router.delete("/{workflow_id}", status_code=204)
 async def delete_workflow(
     workflow_id: uuid.UUID,
-    tenant_id: TenantId = Depends(require_tenant),
+    tenant_id: TenantId = Depends(require_scope("admin")),
     uow: SqlAlchemyUnitOfWork = Depends(get_uow),
 ) -> None:
     async with uow:

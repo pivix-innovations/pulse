@@ -19,6 +19,7 @@ async def _deliver(ctx: dict[str, Any], payload: dict[str, Any]) -> str:
     return await service.deliver(
         TenantId.from_str(payload["tenant_id"]),
         DeliveryAttemptId.from_str(payload["attempt_id"]),
+        traceparent=payload.get("traceparent"),
     )
 
 
@@ -30,10 +31,14 @@ async def deliver_in_app(ctx: dict[str, Any], payload: dict[str, Any]) -> str:
     return await _deliver(ctx, payload)
 
 
+async def on_startup(ctx: dict[str, Any]) -> None:
+    await build_worker_context(ctx, "push")
+
+
 class WorkerSettings:
     functions = [deliver_push, deliver_in_app]
     queue_name = PUSH_QUEUE
-    on_startup = build_worker_context
+    on_startup = on_startup
     on_shutdown = teardown_worker_context
     redis_settings = arq_redis_settings(get_settings().redis)
     max_tries = 1

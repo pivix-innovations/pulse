@@ -33,6 +33,37 @@ class DeliveryAttemptOut(BaseModel):
     last_error: str | None
     sent_at: datetime | None
     delivered_at: datetime | None
+    # Which saved provider carried it (None: the env default), the provider's
+    # own id for the message, and whether a delivery receipt is still awaited.
+    provider_id: uuid.UUID | None = None
+    provider_message_id: str | None = None
+    awaiting_confirmation: bool = False
+    template_id: uuid.UUID | None = None
+    template_version: int | None = None
+
+
+class StepRunOut(BaseModel):
+    """Where one recipient is in a multi-step workflow."""
+
+    recipient_id: uuid.UUID
+    step_id: str
+    step_index: int
+    status: str            # scheduled | done | skipped
+    run_at: datetime
+    executed_at: datetime | None = None
+    attempt_id: uuid.UUID | None = None
+    reason: str | None = None   # why a step was skipped
+
+
+class DigestOut(BaseModel):
+    """The digest this notification's event was folded into."""
+
+    batch_id: uuid.UUID
+    status: str                      # open (still collecting) | flushed (sent)
+    flush_at: datetime               # when the digest is, or was, due
+    item_count: int
+    is_anchor: bool                  # the anchor's attempts carry the consolidated message
+    anchor_notification_id: uuid.UUID
 
 
 class NotificationOut(BaseModel):
@@ -42,6 +73,8 @@ class NotificationOut(BaseModel):
     workflow_id: uuid.UUID
     created_at: datetime | None
     attempts: list[DeliveryAttemptOut]
+    steps: list[StepRunOut] = []
+    digest: DigestOut | None = None
 
 
 class NotificationSummaryOut(BaseModel):

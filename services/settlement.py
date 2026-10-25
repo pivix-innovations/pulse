@@ -14,6 +14,10 @@ async def settle_notification(
     notification = await uow.notifications.get(tenant_id, notification_id)
     if notification is None:
         return False
+    if await uow.step_runs.has_open(notification_id):
+        return False   # a later step of the sequence has yet to run
+    if await uow.digests.has_open_for_notification(notification_id):
+        return False   # its event is still waiting in an unsent digest
     attempts = await uow.delivery_attempts.list_for_notification(tenant_id, notification_id)
     if not notification.settle(attempts):
         return False

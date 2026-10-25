@@ -78,3 +78,37 @@ async def test_unknown_notification_is_404(world):
         "/api/v1/notifications/00000000-0000-0000-0000-000000000009", headers=world.key_headers
     )
     assert res.status_code == 404
+
+
+async def test_an_unavailable_recipient_directory_is_a_503_to_retry_not_a_422(world):
+    from services.ports.clients import SentinelUnavailable
+
+    class Down:
+        async def resolve_recipients(self, *a):
+            raise SentinelUnavailable("down")
+
+    world.app.state.notification_service._sentinel = Down()
+    res = await world.client.post(
+        "/api/v1/events", json={**EVENT, "idempotency_key": "k-down"}, headers=world.key_headers
+    )
+    assert res.status_code == 503 and res.headers["Retry-After"] == "5"
+    assert "recipient directory" in res.json()["detail"]
+
+
+async def test_notifications_can_be_searched_by_event_type_recipient_and_channel(world):
+    nid = (await world.client.post("/api/v1/events", json=EVENT, headers=world.key_headers)).json()["notification_id"]
+
+    async def ids(**params):
+        r = await world.client.get("/api/v1/notifications", params=params, headers=world.key_headers)
+        assert r.status_code == 200
+        return [n["id"] for n in r.json()], r.headers["X-Total-Count"]
+
+    assert await ids(event_type="user.signup") == ([nid], "1")
+    assert await ids(event_type="other.event") == ([], "0")
+    assert await ids(recipient="u1") == ([nid], "1")
+    assert await ids(recipient="nobody") == ([], "0")
+    assert await ids(channel="email") == ([nid], "1")
+    assert await ids(channel="sms") == ([], "0")
+    assert await ids(recipient="u1", channel="in_app", event_type="user.signup", status="processing") == ([nid], "1")
+    bad = await world.client.get("/api/v1/notifications", params={"channel": "fax"}, headers=world.key_headers)
+    assert bad.status_code == 422

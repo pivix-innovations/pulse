@@ -8,6 +8,6 @@ from providers.push.firebase import FcmPushProvider
 
 def build_push_provider(settings: PushSettings) -> PushProvider:
     if settings.driver == "fcm":
-        return FcmPushProvider(settings)
+        return FcmPushProvider(credentials_path=settings.fcm_credentials_path)
     # Console keeps the pipeline runnable locally without credentials.
     return ConsolePushProvider()

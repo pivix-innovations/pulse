@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from typing import AsyncIterator
 
@@ -64,11 +65,21 @@ class Subscription:
         self._pubsub = pubsub
 
     async def get(self, timeout: float) -> str | None:
-        """Next published message body, or None after `timeout` seconds."""
-        message = await self._pubsub.get_message(
-            ignore_subscribe_messages=True, timeout=timeout
-        )
-        if message is None:
-            return None
-        data = message["data"]
-        return data.decode() if isinstance(data, bytes) else str(data)
+        """
+        Next published message body, or None once `timeout` seconds pass with
+        nothing. redis-py returns early (None) when it merely consumes the
+        subscribe confirmation, so keep waiting for the remainder.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return None
+            message = await self._pubsub.get_message(
+                ignore_subscribe_messages=True, timeout=remaining
+            )
+            if message is None:
+                continue
+            data = message["data"]
+            return data.decode() if isinstance(data, bytes) else str(data)

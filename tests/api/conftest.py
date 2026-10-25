@@ -15,6 +15,7 @@ from domain.value_objects.ids import MembershipId, TenantId, UserId
 from config.loader import get_settings
 from main import create_app
 from services.identity_service import IdentityService, hash_password
+from services.inbox_service import InboxService
 from services.metrics_service import MetricsService
 from services.notification_service import NotificationService
 from services.ports.clients import ResolvedRecipient
@@ -23,6 +24,14 @@ from tests.fakes import InMemoryUnitOfWork, StaticSentinelClient
 from workflows.registry import WorkflowRegistry
 
 PASSWORD = "correct horse battery"
+
+
+@pytest.fixture(autouse=True)
+def cheap_password_hashing(monkeypatch):
+    """Tests sign in constantly; production scrypt cost is baked into each hash, so this only speeds tests up."""
+    import services.identity_service as identity
+
+    monkeypatch.setattr(identity, "_SCRYPT_N", 2**4)
 
 
 class FakeRedis:
@@ -40,6 +49,7 @@ class World:
     tenant_id: TenantId
     api_key: str
     redis: FakeRedis
+    app: object = None
 
     @property
     def key_headers(self) -> dict[str, str]:
@@ -61,6 +71,8 @@ async def world(monkeypatch):
         rendering=RenderingService(),
     )
     app.state.metrics_service = MetricsService(lambda: uow)
+    app.state.inbox_service = InboxService(lambda: uow)
+    app.state.rendering = RenderingService()
     app.state.redis = FakeRedis()
 
     # Dependencies are overridden; the two routers that call get_uow() directly are patched.
@@ -81,4 +93,4 @@ async def world(monkeypatch):
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield World(uow, client, tenant.id, api_key, app.state.redis)
+        yield World(uow, client, tenant.id, api_key, app.state.redis, app)

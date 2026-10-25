@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from domain.entities.notification import Notification
 from services.notification_service import NotificationService
-from services.ports.clients import SentinelClient
+from services.ports.clients import SentinelClient, SentinelUnavailable
 from services.ports.uow import UnitOfWork, UnitOfWorkFactory
 from workflows.registry import WorkflowDefinition
 
@@ -41,6 +41,11 @@ class SchedulingService:
                 try:
                     await self._dispatch(uow, notification)
                     dispatched += 1
+                except SentinelUnavailable as exc:
+                    # Not the notification's fault: leave it CREATED and try on the next pass.
+                    logger.warning(
+                        "Scheduled notification %s waits: Sentinel unavailable (%s)", notification.id, exc
+                    )
                 except Exception:
                     logger.exception(
                         "Failed to dispatch scheduled notification %s", notification.id

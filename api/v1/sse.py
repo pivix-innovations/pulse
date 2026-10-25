@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from api.dependencies import get_uow, resolve_env_or_db_api_key
 from domain.enums import ChannelType
+from domain.value_objects.scopes import satisfies
 from domain.entities.recipient import Recipient
 from domain.value_objects.ids import InvalidIdError, RecipientId, TenantId
 from services.identity_service import AuthenticationError, can_access_tenant
@@ -19,6 +20,45 @@ HEARTBEAT_SECONDS = 15.0
 
 def _sse_event(event_id: str, data: dict) -> str:
     return f"id: {event_id}\nevent: notification\ndata: {json.dumps(data)}\n\n"
+
+
+async def stream_events(
+    *,
+    replay_attempts,
+    subscribe,
+    is_disconnected,
+    heartbeat_seconds: float = HEARTBEAT_SECONDS,
+) -> AsyncIterator[str]:
+    """
+    The body of a recipient's SSE stream: first the missed (sent but
+    unacknowledged) notifications, flagged `replayed`, then live ones from
+    the pub/sub subscription, with a comment heartbeat while idle so proxies
+    keep the connection open. Ends when the client goes away.
+
+    `subscribe` is an async context manager yielding an object with
+    `get(timeout) -> str | None` (see sse.registry.Subscription).
+    """
+    for attempt in replay_attempts:
+        yield _sse_event(
+            str(attempt.id),
+            {
+                "id": str(attempt.id),
+                "notification_id": str(attempt.notification_id),
+                "title": attempt.subject,
+                "body": attempt.body,
+                "replayed": True,
+            },
+        )
+    async with subscribe as subscription:
+        while True:
+            if await is_disconnected():
+                return
+            message = await subscription.get(timeout=heartbeat_seconds)
+            if message is None:
+                yield ": ping\n\n"  # heartbeat keeps proxies from closing us
+                continue
+            data = json.loads(message)
+            yield _sse_event(str(data.get("id", "")), data)
 
 
 @router.get("/stream")
@@ -43,9 +83,12 @@ async def stream(
     key = x_api_key or api_key
     tenant_id: TenantId | None = None
     if key:
-        tenant_id = await resolve_env_or_db_api_key(request, key)
-        if tenant_id is None:
+        principal = await resolve_env_or_db_api_key(request, key)
+        if principal is None:
             raise HTTPException(status_code=401, detail="Invalid API key")
+        if not satisfies(principal.scopes, ("client",)):
+            raise HTTPException(status_code=403, detail="This API key lacks the 'client' scope")
+        tenant_id = principal.tenant_id
     elif pulse_session and tenant:
         try:
             auth = await request.app.state.identity_service.resolve_session(pulse_session)
@@ -76,31 +119,12 @@ async def stream(
 
     registry = request.app.state.sse_registry
 
-    async def event_stream() -> AsyncIterator[str]:
-        for attempt in replay_attempts:
-            yield _sse_event(
-                str(attempt.id),
-                {
-                    "id": str(attempt.id),
-                    "notification_id": str(attempt.notification_id),
-                    "title": attempt.subject,
-                    "body": attempt.body,
-                    "replayed": True,
-                },
-            )
-        async with registry.subscribe(tenant_id, recipient_row.id) as subscription:
-            while True:
-                if await request.is_disconnected():
-                    return
-                message = await subscription.get(timeout=HEARTBEAT_SECONDS)
-                if message is None:
-                    yield ": ping\n\n"  # heartbeat keeps proxies from closing us
-                    continue
-                data = json.loads(message)
-                yield _sse_event(str(data.get("id", "")), data)
-
     return StreamingResponse(
-        event_stream(),
+        stream_events(
+            replay_attempts=replay_attempts,
+            subscribe=registry.subscribe(tenant_id, recipient_row.id),
+            is_disconnected=request.is_disconnected,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
