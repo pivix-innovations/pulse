@@ -57,6 +57,206 @@ A multi-tenant notification service built with FastAPI. Pulse ingests events, re
                     REST API / SSE / Metrics
 ```
 
+## Deployed architecture
+
+```mermaid
+flowchart LR
+    subgraph Producers
+        QA["Quotient API<br/>(events, device tokens)"]
+        ADM["Console users<br/>dev-pulse.pivix.in"]
+        PV["Provider callbacks<br/>delivery receipts"]
+    end
+    subgraph CF["Cloudflare Pages"]
+        UI["Static Next.js console"]
+        PX["Pages Function<br/>proxies /api/* and /health"]
+    end
+    subgraph AWS["AWS ap-south-1"]
+        GW["API Gateway HTTP API<br/>dev-pulse-api.pivix.in"]
+        API["Lambda: FastAPI + Mangum<br/>ingest, REST, webhooks"]
+    end
+    NEON[("Neon Postgres<br/>events, notifications, attempts,<br/>OUTBOX, templates, providers, ...")]
+    UPS[("Upstash Redis<br/>API rate limiter, breaker state")]
+    subgraph LIN["Linode VM (systemd services)"]
+        SCH["pulse-scheduler<br/>outbox relay, reconciliation,<br/>scheduled sends, sequences, digests"]
+        RQ[("Redis (localhost)<br/>arq queues")]
+        WE["pulse-email"]
+        WP["pulse-push"]
+        WS["pulse-sms"]
+    end
+    EXT["Providers<br/>Resend, SES, SMTP, SendGrid, FCM, Twilio"]
+
+    QA -- "X-API-Key" --> GW
+    ADM --> UI
+    ADM --> PX --> GW
+    PV --> GW
+    GW --> API
+    API --> NEON
+    API -.-> UPS
+    SCH -- "poll outbox" --> NEON
+    SCH -- "publish jobs" --> RQ
+    RQ --> WE & WP & WS
+    WE & WP & WS -- "load attempt, record outcome" --> NEON
+    WE & WP & WS --> EXT
+```
+
+The API (Lambda) only accepts and records work: it writes the notification and an **outbox** row in one transaction and returns
+`202`. Everything slow or retryable runs on the long-lived workers on the Linode VM, which Lambda cannot host. Workers and
+scheduler use a Redis on the VM itself; the Lambda API uses Upstash only for rate limiting and fails open if it is
+unavailable. See [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### Event to delivery
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Producer (Quotient)
+    participant API as Pulse API (Lambda)
+    participant DB as Neon Postgres
+    participant SCH as Scheduler
+    participant Q as Redis queue
+    participant W as Channel worker
+    participant EXT as Provider (Resend / FCM / ...)
+
+    P->>API: POST /api/v1/events (event_type, payload, recipients)
+    API->>DB: resolve workflow, recipients, preferences, templates
+    API->>DB: ONE transaction: notification, delivery attempts, outbox rows
+    API-->>P: 202 accepted (notification_id)
+    SCH->>DB: poll pending outbox rows
+    SCH->>Q: publish one job per attempt (deduplicated by job id)
+    SCH->>DB: mark outbox row published
+    W->>Q: take job
+    W->>DB: load attempt, dispatch guard in Redis
+    W->>EXT: send (circuit breaker, rate limit, app-level retries)
+    W->>DB: record outcome: sent, retrying or dead
+    EXT-->>API: delivery receipt webhook (HMAC-signed)
+    API->>DB: sent becomes delivered or failed
+    SCH->>DB: reconciliation: stuck or failed attempts escalate to the fallback channel or dead-letter
+```
+
+### Delivery attempt states
+
+Each (recipient x channel) leg of a notification is a `DeliveryAttempt` with a strict state machine
+(`domain/enums/delivery.py`, `DELIVERY_TRANSITIONS`):
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> sent: provider accepted the message
+    pending --> retrying: transient error, backoff
+    pending --> failed: send failed
+    pending --> dead: permanent error (e.g. invalid device token)
+    retrying --> sent: retry succeeded
+    retrying --> failed: retries exhausted
+    retrying --> dead: permanent error
+    sent --> delivered: receipt or client ack
+    sent --> failed: bounce or negative receipt
+    sent --> retrying: retry scheduled
+    sent --> dead: unrecoverable
+    failed --> retrying: retry scheduled
+    failed --> dead: retries and fallbacks exhausted, dead letter
+    delivered --> [*]
+    dead --> [*]
+```
+
+A provider with no receipts (plain SMTP) makes `sent` terminal. Notifications roll up these states into
+`created`, `processing`, `dispatched`, `completed` and `failed`.
+
+### Layers
+
+```mermaid
+flowchart TB
+    MAIN["main.py<br/>app factory, lifespan wiring, Mangum handler"] --> API
+    subgraph API["api/v1 (FastAPI routers)"]
+        A1["events, notifications, devices, inbox, sse"]
+        A2["templates, workflows, providers, preferences, suppressions"]
+        A3["auth, admin, tenant (API keys), audit_log, dead_letters, metrics"]
+        A4["webhooks (provider receipts), unsubscribe"]
+    end
+    API --> DEP["api/dependencies.py<br/>API key (scopes) or console session"]
+    API --> SV
+    subgraph SV["services"]
+        S1["notification_service<br/>ingress pipeline"]
+        S2["delivery_service, send_policy,<br/>reconciliation_service, scheduling_service"]
+        S3["rendering_service, templates,<br/>sequence_service, digest_service"]
+        S4["identity_service, rate_limit_service,<br/>inbox_service, metrics_service"]
+    end
+    SV --> WF["workflows/<br/>registry, steps, digest"]
+    SV --> RN["renderers/<br/>Jinja, Markdown"]
+    SV --> PR["providers/<br/>registry + catalog"]
+    PR --> PE["email: Resend, SES, SendGrid, SMTP"]
+    PR --> PP["push: FCM"]
+    PR --> PS["sms: Twilio"]
+    PR --> PI["in_app: SSE"]
+    SV --> UOW["repositories/<br/>SQLAlchemy unit of work"]
+    UOW --> DOM["domain/<br/>entities, enums, value objects"]
+    UOW --> DB[("Postgres")]
+    SV --> JQ["jobqueue/<br/>relay, producer, retry, circuit breaker,<br/>dispatch guard, rate limiter"]
+    JQ --> RD[("Redis")]
+    WK["workers/<br/>email, push, sms, scheduler"] --> SV
+    WK --> JQ
+    TEL["telemetry/<br/>logs, OpenTelemetry metrics and traces"] -.-> SV
+```
+
+### Data model
+
+```mermaid
+erDiagram
+    TENANT ||--o{ API_KEY : "scoped keys"
+    TENANT ||--o{ MEMBERSHIP : has
+    USER ||--o{ MEMBERSHIP : "console users"
+    TENANT ||--o{ WORKFLOW : defines
+    TENANT ||--o{ TEMPLATE : defines
+    TEMPLATE ||--o{ TEMPLATE_VERSION : "draft, published"
+    TENANT ||--o{ PROVIDER : "saved (secrets encrypted)"
+    TENANT ||--o{ RECIPIENT : knows
+    RECIPIENT ||--o{ DEVICE_TOKEN : registers
+    TENANT ||--o{ EVENT : receives
+    EVENT ||--o{ NOTIFICATION : "fans out to"
+    WORKFLOW ||--o{ NOTIFICATION : "decides"
+    NOTIFICATION ||--o{ DELIVERY_ATTEMPT : "one per recipient and channel"
+    RECIPIENT ||--o{ DELIVERY_ATTEMPT : "to"
+    PROVIDER ||--o{ DELIVERY_ATTEMPT : "sent through"
+    DELIVERY_ATTEMPT ||--o{ OUTBOX_ENTRY : "queued by"
+    DELIVERY_ATTEMPT ||--o| DEAD_LETTER : "gave up"
+    RECIPIENT ||--o{ PREFERENCE : sets
+    RECIPIENT ||--o{ SUPPRESSION : "bounced or opted out"
+    RECIPIENT ||--o{ INBOX_MESSAGE : "in-app"
+
+    EVENT {
+        uuid id PK
+        string event_type
+        string source
+        string idempotency_key
+        json payload
+    }
+    NOTIFICATION {
+        uuid id PK
+        string status "created, processing, dispatched, completed, failed"
+        datetime scheduled_at
+    }
+    DELIVERY_ATTEMPT {
+        uuid id PK
+        string channel "email, push, sms, in_app"
+        string status
+        int attempt_count
+        string provider_message_id
+        datetime next_retry_at
+    }
+    OUTBOX_ENTRY {
+        uuid id PK
+        string status "pending or published"
+    }
+    RECIPIENT {
+        uuid id PK
+        string external_ref "e.g. Sentinel profile_id"
+        string email
+        string phone
+    }
+```
+
+Tenants are isolated by `tenant_id` on every table. Recipients are keyed by the producer's own id (`external_ref`), so Pulse
+needs no user database of its own.
+
 ## Delivery guarantees
 
 - **Transactional outbox** — notifications and their outbox entries are persisted in the same transaction; the relay ([jobqueue/relay.py](jobqueue/relay.py)) publishes at-least-once, deduplicated downstream by job id and a Redis dispatch guard.
