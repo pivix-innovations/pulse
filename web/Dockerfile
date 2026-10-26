@@ -1,4 +1,6 @@
-# Pulse console: a standalone Node service that proxies /api to the Pulse API.
+# Pulse console: static files served by nginx, which proxies /api and /health to the Pulse API.
+# Multi-stage: Node only builds the site; the final image is just nginx and the exported files.
+
 FROM node:22-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -8,16 +10,13 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-# The rewrite target is baked in at build time (next.config.ts), so pass it as a build arg.
-ARG PULSE_API_ORIGIN=http://localhost:9000
-ENV PULSE_API_ORIGIN=$PULSE_API_ORIGIN
+# STATIC_EXPORT=1 writes plain files to out/ (see next.config.ts); the API proxy is nginx's job at runtime.
+ENV STATIC_EXPORT=1
 RUN npm run build
 
-FROM node:22-alpine
-WORKDIR /app
-ENV NODE_ENV=production PORT=3100 HOSTNAME=0.0.0.0
-COPY --from=build /app/.next/standalone ./
-COPY --from=build /app/.next/static ./.next/static
-COPY --from=build /app/public ./public
+FROM nginxinc/nginx-unprivileged:alpine
+# The API the console talks to, resolved when the container starts (see nginx.conf.template).
+ENV PULSE_API_ORIGIN=http://host.docker.internal:9000
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/out /usr/share/nginx/html
 EXPOSE 3100
-CMD ["node", "server.js"]

@@ -1,0 +1,28 @@
+# Rendered by the nginx image's entrypoint (envsubst fills ${PULSE_API_ORIGIN}; nginx's own $variables are untouched).
+server {
+    listen 3100;
+    root /usr/share/nginx/html;
+
+    # Keep the browser same-origin with the API (session cookie, SSE). Streaming responses must not be buffered.
+    location /api/ {
+        proxy_pass ${PULSE_API_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+
+    # FastAPI serves /health/ with a trailing slash.
+    location = /health {
+        proxy_pass ${PULSE_API_ORIGIN}/health/;
+        proxy_ssl_server_name on;
+        proxy_set_header Host $proxy_host;
+    }
+
+    location / {
+        try_files $uri $uri.html $uri/index.html /index.html;
+    }
+}

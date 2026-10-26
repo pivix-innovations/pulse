@@ -1,3 +1,12 @@
 node_modules
 .next
+out
 .env*
+e2e
+test-results
+playwright.config.ts
+tsconfig.tsbuildinfo
+functions
+wrangler.toml
+deploy-cloudflare.sh
+.wrangler
