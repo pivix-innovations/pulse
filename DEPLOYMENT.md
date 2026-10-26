@@ -77,7 +77,8 @@ Without the `PULSE_BOOTSTRAP_*` variables, `seed_admin` falls back to a weak dev
 
 [deploy/template.yaml](deploy/template.yaml) creates the Lambda (`main.handler`), role, 7-day log group, HTTP API and
 custom domain. The Lambda sets `PULSE_DATABASE__MAX_OVERFLOW=1` (Pulse requires a value above 0) with a pool of 2.
-`firebase-admin` is left out of the Lambda build; FCM push runs on the workers.
+`firebase-admin` is in the Lambda build so the console's FCM **Test connection** button works (it adds about 10 MB to
+the zip and does not change cold-start time, because it is only imported when FCM is used). Push is still sent by the workers.
 
 Limits on Lambda: the SSE endpoint (`/api/v1/sse/stream`, used by the console's **Live** page) does not stream, because API
 Gateway buffers the response.
