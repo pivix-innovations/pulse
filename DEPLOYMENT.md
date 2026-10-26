@@ -8,7 +8,7 @@ Pulse has three deployables:
 3. **Console**: the static Next.js console on **Cloudflare Pages**, with a Pages Function that proxies `/api/*` and
    `/health` to the API so the session cookie stays same-origin.
 
-**Redis** (arq queue, rate limiter, circuit breaker) is a managed **Upstash** database, shared by the API and the workers.
+**Redis** is used in two places. The **workers and scheduler** use a Redis installed on the Linode itself (localhost only, password, append-only persistence): the arq queue polls constantly, which exhausts a free Upstash plan (500,000 requests a month) within days. The **Lambda API** uses a managed **Upstash** database for its rate limiter and circuit-breaker state, which is light traffic. If Upstash is unavailable the API keeps accepting events: rate limiting fails open.
 
 | | |
 |---|---|
@@ -30,7 +30,7 @@ Delivery is at-least-once and de-duplicated by job id.
 ## Configuration model
 
 Settings use the `PULSE_` prefix with `__` for nesting (`PULSE_DATABASE__HOST`). Two additions were made for managed services:
-`PULSE_DATABASE__SSL=true` (Neon) and `PULSE_REDIS__USERNAME` / `PULSE_REDIS__SSL=true` (Upstash).
+`PULSE_DATABASE__SSL=true` (Neon) and `PULSE_REDIS__USERNAME` / `PULSE_REDIS__SSL=true` (Upstash). On the Linode, `worker.env` instead has `PULSE_REDIS__HOST=127.0.0.1`, the local password and `PULSE_REDIS__SSL=false`.
 
 [deploy/configure_env.py](deploy/configure_env.py) writes these into `.env`:
 
@@ -127,7 +127,9 @@ FCM, SES) take precedence over this env default.
 
 ```sh
 ssh root@<worker-host-ip>
-apt-get update && apt-get install -y rsync curl ca-certificates
+apt-get update && apt-get install -y rsync curl ca-certificates redis-server
+# Redis: bind 127.0.0.1 only, set requirepass <password>, appendonly yes, maxmemory-policy noeviction, then:
+systemctl enable --now redis-server
 useradd -m -s /bin/bash pulse && mkdir -p /opt/pulse /etc/pulse && chown pulse:pulse /opt/pulse
 su - pulse -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 ```
@@ -178,8 +180,9 @@ journalctl -u pulse-email -f
 ```
 
 Healthy output: the scheduler logs `Outbox relay started`, and `arq` workers log the Redis version on start. A
-`redis connection error ... AuthenticationError` means the Upstash credentials in `worker.env` are wrong (a password
-shown as `********` in the Upstash dashboard is masked, not the real token).
+`redis connection error ... AuthenticationError` means the Redis password in `worker.env` is wrong (for Upstash, a password
+shown as `********` in the dashboard is masked, not the real token). Check the local Redis with
+`redis-cli -a <password> ping` and `systemctl status redis-server`.
 
 ## Console (Cloudflare Pages)
 
@@ -227,6 +230,7 @@ curl $B/notifications/<id> -H "$H"     # attempts[0].status becomes "sent"
 | Lambda: `No module named 'cryptography'` | Keep `cryptography` in `deploy/requirements-lambda.txt` |
 | Email attempt `timed out after 30s` | SMTP is blocked on the Linode; use `PULSE_EMAIL__DRIVER=resend` |
 | Email attempt stuck `retrying` after a worker restart | arq retries are disabled (app-level backoff); send a new event |
-| `redis ... invalid username-password pair` | Wrong or masked Upstash token |
+| `redis ... invalid username-password pair` | Wrong Redis password (or a masked Upstash token) |
+| `max requests limit exceeded` | Upstash free plan used up. The workers must use the Linode's local Redis, not Upstash |
 | `403 not authorized to send from <domain>` | Domain not verified for that Resend key |
 | Console **Live** page never updates | SSE does not stream through API Gateway |
