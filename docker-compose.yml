@@ -35,12 +35,13 @@ services:
         - openobserve_data:/data
 
   # The console. Opt in:  docker compose --profile app up -d --build web
-  # Rewrites are compiled in: set PULSE_API_ORIGIN to where this container reaches the API.
+  # Static files served by nginx (about 60 MB); PULSE_API_ORIGIN is where it proxies /api and /health.
   web:
       build:
         context: ./web
-        args:
-          PULSE_API_ORIGIN: ${PULSE_API_ORIGIN:-http://host.docker.internal:9000}
+      environment:
+        # Where the nginx in the image proxies /api and /health (read when the container starts).
+        PULSE_API_ORIGIN: ${PULSE_API_ORIGIN:-http://host.docker.internal:9000}
       profiles: ['app']
       restart: unless-stopped
       ports:
